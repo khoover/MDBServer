@@ -14,15 +14,12 @@ logger = logging.getLogger(__name__)
 class USBHandler:
     """Reads from and writes to the underlying MDB USB board.
 
-    Intended to be used as follows: there is a single consumer of any message
-    type (i.e. message prefix), which calls the read method with that prefix
-    passed. Read will then wait until a message with that prefix arrives and
-    return with that message. Consumers should have a dedicated polling loop
-    that does not block with message processing. The Master and CashlessSlave
-    ckasses contain two different implementations of this behaviour."""
+    Users can """
+
     def __init__(self):
         self.initialized = False
         self.waiters = {}
+        self.queues = {}
 
     async def initialize(self, device_path: str):
         logger.debug("Initializing USBReader.")
@@ -85,11 +82,11 @@ class Master:
     pass
 
 
-class Slave(ABC):
+class Sniffer:
     pass
 
 
-class CashlessSlave(Slave):
+ class CashlessSlave:
     pass
 
 
@@ -107,4 +104,6 @@ if __name__ == "__main__":
     parser.add_argument('--device_path', help="Location of the MDB board's "
                         "device file. Defaults to '/dev/ttyUSB0'.",
                         default='/dev/ttyUSB0', type=str)
+    parser.add_argument("--sniff", help="Enable the packet sniffer for
+                        debugging.", action='store_true')
     asyncio.run(main(parser.parse_args()))
