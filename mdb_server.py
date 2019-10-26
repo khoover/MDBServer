@@ -49,7 +49,7 @@ class USBHandler:
             if message_type in self.waiters:
                 self.waiters[message_type].set_result(stripped_message)
                 del self.waiters[message_type]
-                # Lets the waiters run.
+                # Lets the waiter run.
                 await asyncio.sleep(0)
             elif message_type in self.queues:
                 try:
