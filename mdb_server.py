@@ -51,15 +51,15 @@ class Sniffer:
 
     async def initialize(self, usb_handler):
         self.usb_handler = usb_handler
-        status = await usb_handler.sendread(b'X,1\n', b'x')
-        if status != b'x,ACK':
+        status = await usb_handler.sendread(to_ascii('X,1'), 'x')
+        if status != 'x,ACK':
             logger.error(f"Unable to start MDB sniffer, got {status}")
-        self.message_queue = usb_handler.read(b'x')
+        self.message_queue = usb_handler.read('x')
 
     async def run(self):
         while True:
             message = await self.message_queue.get()
-            message = message.decode(encoding='ASCII').split(',')[1:]
+            message = message.split(',')[1:]
             logger.debug(f"Message sniffed: {message}")
 
 
