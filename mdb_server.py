@@ -107,6 +107,6 @@ if __name__ == "__main__":
     parser.add_argument('--device_path', help="Location of the MDB board's "
                         "device file. Defaults to '/dev/ttyUSB0'.",
                         default='/dev/ttyUSB0', type=str)
-    parser.add_argument("--sniff", help="Enable the packet sniffer for"
+    parser.add_argument("--sniff", help="Enable the packet sniffer for "
                         "debugging.", action='store_true')
     asyncio.run(main(parser.parse_args()))
