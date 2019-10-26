@@ -19,8 +19,8 @@ class Peripheral(ABC):
     async def initialize(self, master, send_reset=True):
         """Initialization code for the peripheral.
 
-        Feel free to send messages here, they won't actually be sent until the
-        USB connection is established.
+        Feel free to send messages here, the USB interfact will be initialized
+        before this is called.
 
         :param master: the Master instance controlling this peripheral
         :param send_reset: whether to send a reset command or not"""
@@ -50,7 +50,7 @@ class Peripheral(ABC):
     @abstractmethod
     async def run(self):
         """Does whatever persistent action is needed."""
-        pass
+        assert self.initialized
 
 
 class BillValidator(Peripheral):
@@ -67,16 +67,21 @@ class Master:
 
 class Sniffer:
     def __init__(self):
-        pass
+        self.initialized = False
 
     async def initialize(self, usb_handler):
+        logger.debug("Initializing MDB sniffer.")
+        self.initialized = True
         self.usb_handler = usb_handler
         status = await usb_handler.sendread(to_ascii('X,1'), 'x')
         if status != 'x,ACK':
             logger.error(f"Unable to start MDB sniffer, got {status}")
+        else:
+            logger.debug("Sniffer initialized")
         self.message_queue = usb_handler.read('x')
 
     async def run(self):
+        assert self.initialized
         while True:
             message = await self.message_queue.get()
             message = message.split(',')[1:]
