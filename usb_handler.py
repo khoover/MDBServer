@@ -44,7 +44,8 @@ class USBHandler:
     async def run(self) -> None:
         assert self.initialized
         while True:
-            # TODO: Make sure the end-of-line character is b'\n'
+            # TODO: Make sure the end-of-line character is b'\n' on board
+            # replies.
             message = await self.serial_reader.readuntil(separator=b'\n')
             stripped_message = message.decode(encoding='ascii').rstrip('\n\r')
             logger.info(f"Read '{stripped_message}' from MDB board.")
