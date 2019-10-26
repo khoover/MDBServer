@@ -5,7 +5,6 @@ from mdb import Sniffer, Master, BillValidator, CoinAcceptor, CashlessSlave
 from usb_handler import USBHandler, to_ascii
 import websockets
 
-
 logger = logging.getLogger(__name__)
 
 

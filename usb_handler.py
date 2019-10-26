@@ -4,7 +4,6 @@ import os.path
 from serial_asyncio import open_serial_connection
 from typing import NewType, cast
 
-
 logger = logging.getLogger(__name__)
 # Type annotations and converters
 AsciiBytes = NewType('AsciiBytes', bytes)
