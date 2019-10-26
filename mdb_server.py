@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 import argparse
 import asyncio
 import logging
-from .usb_handler import USBHandler
+from .usb_handler import USBHandler, to_ascii
 import websockets
 
 

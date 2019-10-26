@@ -2,11 +2,18 @@ import asyncio
 import logging
 import os.path.exists
 from serial_asyncio import open_serial_connection
-from typing import Union
+from typing import NewType, cast
 
 
 logger = logging.getLogger(__name__)
-BytesLike = Union[str, bytes, bytearray]
+# Type annotations and converters
+AsciiBytes = NewType('AsciiBytes', bytes)
+
+
+def to_ascii(s: str) -> AsciiBytes:
+    if s[-1] != '\n':
+        s += '\n'
+    return cast(AsciiBytes, s.encode(encoding='ascii'))
 
 
 class USBHandler:
@@ -25,7 +32,7 @@ class USBHandler:
         self.waiters = {}
         self.queues = {}
 
-    async def initialize(self, device_path: str):
+    async def initialize(self, device_path: str) -> None:
         assert os.path.exists(device_path)
         logger.debug("Initializing USBReader.")
         self.initialized = True
@@ -34,15 +41,14 @@ class USBHandler:
             await open_serial_connection(url=device_path, baudrate=115200)
         logger.info(f"Connected to serial device at {device_path}.")
 
-    async def run(self):
+    async def run(self) -> None:
         assert self.initialized
         while True:
             # TODO: Make sure the end-of-line character is b'\n'
             message = await self.serial_reader.readuntil(separator=b'\n')
-            stripped_message = message.rstrip(b'\n\r')
+            stripped_message = message.decode(encoding='ascii').rstrip('\n\r')
             logger.info(f"Read '{stripped_message}' from MDB board.")
-            # The first byte as a bytes, not an int; quirk of indexing bytes.
-            message_type = stripped_message[0:1]
+            message_type = stripped_message[0]
             if message_type in self.waiters:
                 self.waiters[message_type].set_result(stripped_message)
                 del self.waiters[message_type]
@@ -59,20 +65,16 @@ class USBHandler:
             else:
                 logger.error(f"Unhandled message: {stripped_message}")
 
-    async def send(self, message: BytesLike, _drain=True):
+    async def send(self, message: AsciiBytes, _drain=True) -> None:
         assert self.initialized
-        message = self.maybe_str_to_bytes(message)
-        if message[-1] != 10:  # ASCII newlines are 0x0a.
-            message = b"".join(message, b"\n")
         logger.info(f"Sending message to MDB board: {message}")
         self.serial_writer.write(message)
         if _drain:
             await self.serial_writer.drain()
         logger.info(f"Sent message to MDB board: {message}")
 
-    def _readonce_internal(self, prefix: BytesLike):
+    def _readonce_internal(self, prefix: str) -> asyncio.Future:
         assert len(prefix) == 1
-        prefix = self.maybe_str_to_bytes(prefix)
         if prefix in self.queues or prefix in self.waiters:
             raise RuntimeError("Tried to wait for message type {prefix}"
                                " when there was already a queue listening to "
@@ -82,7 +84,7 @@ class USBHandler:
         logger.info(f"Waiting for a single message of type: {prefix}")
         return fut
 
-    async def sendread(self, message: BytesLike, prefix: BytesLike):
+    async def sendread(self, message: AsciiBytes, prefix: str) -> str:
         self.send(message, _drain=False)
         fut = self._readonce_internal(prefix)
         await self.serial_writer.drain()
@@ -90,15 +92,14 @@ class USBHandler:
         logger.info(f"Got message: {fut.result()}")
         return fut.result()
 
-    async def readonce(self, prefix: BytesLike):
+    async def readonce(self, prefix: str) -> str:
         fut = self._readonce_internal(prefix)
         await fut
         logger.info(f"Got message: {fut.result()}")
         return fut.result()
 
-    def read(self, prefix: BytesLike):
+    def read(self, prefix: str) -> asyncio.Queue:
         assert len(prefix) == 1
-        prefix = self.maybe_str_to_bytes(prefix)
         if prefix in self.waiters or prefix in self.queues:
             raise RuntimeError("Tried to get a queue for message type {prefix}"
                                " when there was already someone waiting on"
@@ -107,15 +108,11 @@ class USBHandler:
         logger.info(f"Polling for messages of type: {prefix}")
         return self.queues[prefix]
 
-    def unread(self, prefix: BytesLike):
+    def unread(self, prefix: str) -> None:
         """Stops pushing messages with this prefix character to a Queue."""
         assert len(prefix) == 1
-        prefix = self.maybe_str_to_bytes(prefix)
         del self.queues[prefix]
         logger.info(f"No longer polling for message type: {prefix}")
 
-    @staticmethod
-    def maybe_str_to_bytes(s: BytesLike):
-        if type(s) is str:
-            s = s.encode('ascii')
-        return s
+
+__all__ = (USBHandler, to_ascii)
