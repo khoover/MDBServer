@@ -1,95 +1,12 @@
-from abc import ABC, abstractmethod
 import argparse
 import asyncio
 import logging
+from mdb import Sniffer, Master, BillValidator, CoinAcceptor, CashlessSlave
 from usb_handler import USBHandler, to_ascii
 import websockets
 
 
 logger = logging.getLogger(__name__)
-
-
-class Peripheral(ABC):
-    """Generic implementation of an MDB peripheral interface."""
-    def __init__(self):
-        self.lock = asyncio.Lock()
-        self.initialized = False
-
-    @abstractmethod
-    async def initialize(self, master, send_reset=True):
-        """Initialization code for the peripheral.
-
-        Feel free to send messages here, the USB interface will be initialized
-        before this is called.
-
-        :param master: the Master instance controlling this peripheral
-        :param send_reset: whether to send a reset command or not"""
-        logger.debug("Initializing peripheral of type "
-                     f"{self.__class__.__name__}.")
-        self.initialized = True
-        self.master = master
-
-    async def send(self, message):
-        async with self.lock:
-            await self.master.send(message)
-
-    async def sendread(self, message, prefix):
-        async with self.lock:
-            return await self.master.sendread(message, prefix)
-
-    @abstractmethod
-    async def enable(self):
-        """Enables the peripheral for vending activities."""
-        pass
-
-    @abstractmethod
-    async def disable(self):
-        """Disables the peripheral for vending activities."""
-        pass
-
-    @abstractmethod
-    async def run(self):
-        """Does whatever persistent action is needed."""
-        assert self.initialized
-
-
-class BillValidator(Peripheral):
-    pass
-
-
-class CoinAcceptor(Peripheral):
-    pass
-
-
-class Master:
-    pass
-
-
-class Sniffer:
-    def __init__(self):
-        self.initialized = False
-
-    async def initialize(self, usb_handler):
-        logger.debug("Initializing MDB sniffer.")
-        self.initialized = True
-        self.usb_handler = usb_handler
-        status = await usb_handler.sendread(to_ascii('X,1\n'), 'x')
-        if status != 'x,ACK':
-            logger.error(f"Unable to start MDB sniffer, got {status}")
-        else:
-            logger.debug("Sniffer initialized")
-        self.message_queue = usb_handler.listen('x')
-
-    async def run(self):
-        assert self.initialized
-        while True:
-            message = await self.message_queue.get()
-            message = message.split(',')[1:]
-            logger.debug(f"Message sniffed: {message}")
-
-
-class CashlessSlave:
-    pass
 
 
 class WebsocketClient:
