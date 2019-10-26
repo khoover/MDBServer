@@ -19,7 +19,7 @@ class Peripheral(ABC):
     async def initialize(self, master, send_reset=True):
         """Initialization code for the peripheral.
 
-        Feel free to send messages here, the USB interfact will be initialized
+        Feel free to send messages here, the USB interface will be initialized
         before this is called.
 
         :param master: the Master instance controlling this peripheral
@@ -73,7 +73,7 @@ class Sniffer:
         logger.debug("Initializing MDB sniffer.")
         self.initialized = True
         self.usb_handler = usb_handler
-        status = await usb_handler.sendread(to_ascii('X,1'), 'x')
+        status = await usb_handler.sendread(to_ascii('X,1\n'), 'x')
         if status != 'x,ACK':
             logger.error(f"Unable to start MDB sniffer, got {status}")
         else:
@@ -98,6 +98,8 @@ class WebsocketClient:
 
 async def main(args):
     handler = USBHandler()
+    # Order of initialization matters here; USB Handler has to be first, in
+    # case the users try sending strings in their initialization.
     await handler.initialize(args.device_path)
     if args.sniff:
         sniffer = Sniffer()
