@@ -7,10 +7,10 @@ logger = logging.getLogger(__name__)
 
 
 class Peripheral(ABC):
+    """Generic implementation of an MDB peripheral interface."""
     lock: asyncio.Lock
     master: Master
 
-    """Generic implementation of an MDB peripheral interface."""
     def __init__(self):
         self.lock = asyncio.Lock()
         self.initialized = False
