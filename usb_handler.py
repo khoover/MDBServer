@@ -1,6 +1,6 @@
 import asyncio
 import logging
-import os.path.exists
+import os.path
 from serial_asyncio import open_serial_connection
 from typing import NewType, cast
 
