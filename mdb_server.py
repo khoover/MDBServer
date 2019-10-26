@@ -78,7 +78,7 @@ class Sniffer:
             logger.error(f"Unable to start MDB sniffer, got {status}")
         else:
             logger.debug("Sniffer initialized")
-        self.message_queue = usb_handler.read('x')
+        self.message_queue = usb_handler.listen('x')
 
     async def run(self):
         assert self.initialized
@@ -99,6 +99,13 @@ class WebsocketClient:
 async def main(args):
     handler = USBHandler()
     await handler.initialize(args.device_path)
+    if args.sniff:
+        sniffer = Sniffer()
+        await sniffer.initialize(handler)
+    run_tasks = []
+    run_tasks.append(asyncio.create_task(handler.run()))
+    run_tasks.append(asyncio.create_task(sniffer.run()))
+    asyncio.wait(run_tasks)
 
 
 if __name__ == "__main__":

@@ -20,12 +20,12 @@ class USBHandler:
     """Reads from and writes to the underlying MDB USB board.
 
     Users can either obtain an asyncio.Queue that the handler will push
-    messages to using read(), or it can ask for a one-time read using
-    readonce(). For sending messages, if no reply is expected or there is a
-    poller waiting for any response, send() can be used, otherwise sendread()
-    will send the message and wait for a one-time reply. Registering a one-time
-    listener while a polling queue is an error, See the Sniffer class
-    for examples of how both can be used."""
+    messages to using listen(), or it can ask for a one-time read using read().
+    For sending messages, if no reply is expected or there is a poller waiting
+    for any response, send() can be used, otherwise sendread() will send the
+    message and wait for a one-time reply. Having a listener and waiting for a
+    single message at the same time is an error. See the Sniffer class for an
+    example of both usages."""
 
     def __init__(self):
         self.initialized = False
@@ -73,7 +73,7 @@ class USBHandler:
             await self.serial_writer.drain()
         logger.info(f"Sent message to MDB board: {message}")
 
-    def _readonce_internal(self, prefix: str) -> asyncio.Future:
+    def _read_internal(self, prefix: str) -> asyncio.Future:
         assert len(prefix) == 1
         if prefix in self.queues or prefix in self.waiters:
             raise RuntimeError("Tried to wait for message type {prefix}"
@@ -86,19 +86,19 @@ class USBHandler:
 
     async def sendread(self, message: AsciiBytes, prefix: str) -> str:
         self.send(message, _drain=False)
-        fut = self._readonce_internal(prefix)
+        fut = self._read_internal(prefix)
         await self.serial_writer.drain()
         await fut
         logger.info(f"Got message: {fut.result()}")
         return fut.result()
 
-    async def readonce(self, prefix: str) -> str:
-        fut = self._readonce_internal(prefix)
+    async def read(self, prefix: str) -> str:
+        fut = self._read_internal(prefix)
         await fut
         logger.info(f"Got message: {fut.result()}")
         return fut.result()
 
-    def read(self, prefix: str) -> asyncio.Queue:
+    def listen(self, prefix: str) -> asyncio.Queue:
         assert len(prefix) == 1
         if prefix in self.waiters or prefix in self.queues:
             raise RuntimeError("Tried to get a queue for message type {prefix}"
@@ -108,7 +108,7 @@ class USBHandler:
         logger.info(f"Polling for messages of type: {prefix}")
         return self.queues[prefix]
 
-    def unread(self, prefix: str) -> None:
+    def unlisten(self, prefix: str) -> None:
         """Stops pushing messages with this prefix character to a Queue."""
         assert len(prefix) == 1
         del self.queues[prefix]
