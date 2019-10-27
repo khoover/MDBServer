@@ -1,8 +1,7 @@
 import asyncio
 import logging
+from mdb.peripherals import BillValidator, CoinAcceptor
 from usb_handler import USBHandler, to_ascii
-from mdb import Peripheral, BillValidator, CoinAcceptor
-from typing import Seq
 
 logger = logging.getLogger(__name__)
 
@@ -10,7 +9,8 @@ logger = logging.getLogger(__name__)
 class Master:
     lock: asyncio.Lock
     usb_handler: USBHandler
-    peripherals: Seq[Peripheral]
+    bill_validator: BillValidator
+    coin_acceptor: CoinAcceptor
 
     def __init__(self):
         self.lock = asyncio.Lock()
@@ -18,16 +18,25 @@ class Master:
 
     async def initialize(self,
                          usb_handler: USBHandler,
+                         bill_validator: BillValidator,
+                         coin_acceptor: CoinAcceptor,
                          bus_reset=True) -> None:
         logger.debug("Initializing MDB Master.")
         self.initialized = True
         self.usb_handler = usb_handler
+        self.bill_validator = bill_validator
+        self.coin_acceptor = coin_acceptor
         status = await self.sendread('M,1\n', 'm')
         if status != 'm,ACK':
             raise RuntimeError('Unable to start master mode on MDB board.')
         if bus_reset:
             await self.send('R,RESET\n')
             await asyncio.sleep(0.2)
+        validator_init = asyncio.create_task(
+            bill_validator.initialize(self, not bus_reset))
+        acceptor_init = asyncio.create_task(
+            coin_acceptor.initialize(self, not bus_reset))
+        asyncio.wait((validator_init, acceptor_init))
 
     async def send(self, message: str) -> None:
         assert self.initialized
@@ -41,9 +50,9 @@ class Master:
 
     async def enable(self):
         assert self.initialized
-        tasks = [asyncio.create_task(peripheral.enable()) for peripheral in
-                 self.peripherals]
-        done, _ = await asyncio.wait(tasks)
+        validator_enable = asyncio.create_task(self.bill_validator.enable())
+        acceptor_enable = asyncio.create_task(self.coin_acceptor.enable())
+        done, _ = await asyncio.wait((validator_enable, acceptor_enable))
         for t in done:
             if t.exception():
                 logger.error("Had an error enabling an MDB device: "
@@ -51,9 +60,9 @@ class Master:
 
     async def disable(self):
         assert self.initialized
-        tasks = [asyncio.create_task(peripheral.disable()) for peripheral in
-                 self.peripherals]
-        done, _ = await asyncio.wait(tasks)
+        validator_disable = asyncio.create_task(self.bill_validator.disable())
+        acceptor_disable = asyncio.create_task(self.coin_acceptor.disable())
+        done, _ = await asyncio.wait((validator_disable, acceptor_disable))
         for t in done:
             if t.exception():
                 logger.error("Had an error disabling an MDB device: "
