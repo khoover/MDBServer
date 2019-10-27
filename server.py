@@ -1,8 +1,11 @@
 import argparse
 import asyncio
 import logging
-from mdb import Sniffer, Master, BillValidator, CoinAcceptor, CashlessSlave
-from usb_handler import USBHandler, to_ascii
+from mdb.cashless_slave import CashlessSlave
+from mdb.master import Master
+from mdb.peripherals import CoinAcceptor, BillValidator
+from mdb.sniffer import Sniffer
+from usb_handler import USBHandler
 import websockets
 
 logger = logging.getLogger(__name__)
@@ -20,10 +23,31 @@ async def main(args):
     if args.sniff:
         sniffer = Sniffer()
         await sniffer.initialize(handler)
+    master = Master()
+    bill_validator = BillValidator()
+    coin_acceptor = CoinAcceptor()
+    init_tasks = []
+    init_tasks.append(asyncio.create_task(master.initialize(handler,
+                                                            bill_validator,
+                                                            coin_acceptor)))
+    done, _ = asyncio.wait(init_tasks, return_when=asyncio.FIRST_EXCEPTION)
+    bad_initialization = False
+    for t in done:
+        if t.exception():
+            bad_initialization = True
+            logger.critical("Encountered an error initializing a component.",
+                            exc_info=t.exception())
+    if bad_initialization:
+        raise RuntimeError("Unable to initialize the server, see logs for "
+                           "details.")
     run_tasks = []
     run_tasks.append(asyncio.create_task(handler.run()))
     run_tasks.append(asyncio.create_task(sniffer.run()))
-    asyncio.wait(run_tasks)
+    done, _ = asyncio.wait(run_tasks, return_when=asyncio.FIRST_EXCEPTION)
+    for t in done:
+        if t.exception():
+            logger.critical("Encountered an unhandled exception while running"
+                            "the server.", exc_info=t.exception())
 
 
 if __name__ == "__main__":
