@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 import asyncio
 import logging
 import time
-from typing import Union
+from typing import Union, Seq
 
 logger = logging.getLogger(__name__)
 RealNumber = Union[float, int]  # 'Numeric' isn't built-in? Really?
@@ -13,6 +13,7 @@ class Peripheral(ABC):
     """Generic implementation of an MDB peripheral interface."""
     lock: asyncio.Lock
     NON_RESPONSE_SECONDS: RealNumber
+    POLLING_INTERVAL_SECONDS = 0.1
     BOARD_RESPONSE_PREFIX = 'p'
 
     def __init__(self):
@@ -63,7 +64,7 @@ class Peripheral(ABC):
         start = time.time()
         while message_status == self.BOARD_RESPONSE_PREFIX + ',NACK' and \
                 time.time() - start < self.NON_RESPONSE_SECONDS:
-            asyncio.sleep(0.25)  # Ratelimiting
+            asyncio.sleep(self.POLLING_INTERVAL_SECONDS)  # Ratelimiting
             message_status = await self.sendread(message,
                                                  self.BOARD_RESPONSE_PREFIX)
         # If the timeout is exceeded and we're still getting NACKs, let the
@@ -75,7 +76,7 @@ class Peripheral(ABC):
         start = time.time()
         while message_status == self.BOARD_RESPONSE_PREFIX + ',NACK' and \
                 time.time() - start < self.NON_RESPONSE_SECONDS:
-            asyncio.sleep(0.25)  # Ratelimiting
+            asyncio.sleep(self.POLLING_INTERVAL_SECONDS)  # Ratelimiting
             message_status = await self.sendread_nolock(message)
         # If the timeout is exceeded and we're still getting NACKs, let the
         # caller know so they can do recovery.
@@ -84,14 +85,14 @@ class Peripheral(ABC):
     async def sendread_until_data_or_nack(self, message: str) -> str:
         message_status = await self.sendread_until_timeout(message)
         while message_status == self.BOARD_RESPONSE_PREFIX + ',ACK':
-            asyncio.sleep(0.25)  # Ratelimiting
+            asyncio.sleep(self.POLLING_INTERVAL_SECONDS)  # Ratelimiting
             message_status = await self.sendread_until_timeout(message)
         return message_status
 
     async def sendread_nolock_until_data_or_nack(self, message: str) -> str:
         message_status = await self.sendread_nolock_until_timeout(message)
         while message_status == self.BOARD_RESPONSE_PREFIX + ',ACK':
-            asyncio.sleep(0.25)  # Ratelimiting
+            asyncio.sleep(self.POLLING_INTERVAL_SECONDS)  # Ratelimiting
             message_status = await self.sendread_nolock_until_timeout(message)
         return message_status
 
@@ -146,35 +147,41 @@ class BillValidator(Peripheral):
 
     async def initialize(self, master, send_reset=True) -> None:
         await super().initialize(master, send_reset)
-        with self.lock:
-            success = await self.reset(send_reset)
-            retries = 0
-            while not success and retries < 3:
-                success = await self.reset(True)
-                retries += 1
-            if not success:
-                raise RuntimeError("Unable to start the bill validator.")
+        try:
+            await asyncio.wait_for(self.reset(send_reset), 30)
+        except asyncio.TimeoutError:
+            logger.critical('Unable to start the bill validator.')
+            raise
 
-    async def reset(self, send_reset=True) -> bool:
+    async def reset(self, send_reset=True) -> None:
         """Resets the bill validator.
 
-        Assumes the caller is holding the lock."""
-        if send_reset:
-            logger.info('Sending reset command to bill validator.')
-            await self.send(f"R,{self.create_address_byte('RESET')}\n")
-            await asyncio.sleep(SETUP_TIME_SECONDS)
-        # Poll until JUST RESET
-        logger.info('Polling bill validator for JUST RESET.')
-        response = \
-            await self.sendread_nolock_until_data_or_nack(self.POLL_COMMAND)
-        if response == 'R,NACK':
-            logger.error("Exceeded non-response time during reset, check if "
-                         "the vending machine is on fire.")
-            return False
-        if response != 'R,06':  # Should just get the JUST RESET.
-            logger.error("Got an unexpected response while resetting the bill "
-                         f"validator: {response}")
-            return False
+        Will only return once the validator is finished the reset command
+        sequence; should be wrapped with asyncio.wait_for if you want to
+        timeout the attempts."""
+        with self.lock:
+            while True:
+                if send_reset:
+                    command = "R," + self.create_address_byte('RESET') + "\n"
+                    response = 'R,NACK'
+                    while response == 'R,NACK':
+                        logger.info('Sending reset command to bill validator.')
+                        response = await self.sendread_nolock_until_timeout(
+                            command)
+                    await asyncio.sleep(SETUP_TIME_SECONDS)
+                # Poll until JUST RESET
+                logger.info('Polling bill validator for JUST RESET.')
+                response = await self.sendread_nolock_until_data_or_nack(
+                    self.POLL_COMMAND)
+                if response == 'R,NACK':
+                    logger.error("Exceeded non-response time during reset, "
+                                 "check if the vending machine is on fire.")
+                    return False
+                response_statuses = [response[i:i+2] for
+                                     i in range(2, len(response), 2)]
+
+    async def handle_poll_responses(self, responses: Seq[str]):
+        pass
 
 
 class CoinAcceptor(Peripheral):
