@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from mdb.peripherals import BillValidator, CoinAcceptor
+from mdb.peripherals import BillValidator, CoinAcceptor, SETUP_TIME_SECONDS
 from usb_handler import USBHandler, to_ascii
 
 logger = logging.getLogger(__name__)
@@ -31,7 +31,7 @@ class Master:
             raise RuntimeError('Unable to start master mode on MDB board.')
         if bus_reset:
             await self.send('R,RESET\n')
-            await asyncio.sleep(0.2)
+            await asyncio.sleep(SETUP_TIME_SECONDS)
         validator_init = asyncio.create_task(
             bill_validator.initialize(self, not bus_reset))
         acceptor_init = asyncio.create_task(
