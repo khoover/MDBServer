@@ -2,17 +2,16 @@ from abc import ABC, abstractmethod
 import asyncio
 import logging
 import time
-from typing import Union, Seq
+from typing import Sequence
 
 logger = logging.getLogger(__name__)
-RealNumber = Union[float, int]  # 'Numeric' isn't built-in? Really?
 SETUP_TIME_SECONDS = 0.2
 
 
 class Peripheral(ABC):
     """Generic implementation of an MDB peripheral interface."""
     lock: asyncio.Lock
-    NON_RESPONSE_SECONDS: RealNumber
+    NON_RESPONSE_SECONDS: float
     POLLING_INTERVAL_SECONDS = 0.1
     BOARD_RESPONSE_PREFIX = 'p'
 
@@ -180,7 +179,7 @@ class BillValidator(Peripheral):
                 response_statuses = [response[i:i+2] for
                                      i in range(2, len(response), 2)]
 
-    async def handle_poll_responses(self, responses: Seq[str]):
+    async def handle_poll_responses(self, responses: Sequence[str]):
         pass
 
 
