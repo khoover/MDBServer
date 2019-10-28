@@ -171,11 +171,9 @@ class BillValidator(Peripheral):
             logger.error("Exceeded non-response time during reset, check if "
                          "the vending machine is on fire.")
             return False
-        poll_data = [response[i:i+2] for i in range(2, len(response), 2)]
-        logger.info(f"Got responses to polling after reset: {poll_data}")
-        if '06' not in poll_data:  # 06 is the JUST RESET code.
-            logger.error("Didn't get a JUST RESET, something else is accessing"
-                         " the validator and/or stealing poll responses.")
+        if response != 'R,06':  # Should just get the JUST RESET.
+            logger.error("Got an unexpected response while resetting the bill "
+                         f"validator: {response}")
             return False
 
 
