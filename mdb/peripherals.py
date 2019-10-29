@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 import asyncio
 import logging
 import time
-from typing import Sequence
+from typing import Sequence, Dict
 
 logger = logging.getLogger(__name__)
 SETUP_TIME_SECONDS = 0.2
@@ -25,6 +25,8 @@ class Peripheral(ABC):
     NON_RESPONSE_SECONDS: float
     POLLING_INTERVAL_SECONDS = 0.1
     BOARD_RESPONSE_PREFIX = 'p'
+    ADDRESS: int
+    COMMANDS: Dict[str, int]
 
     def __init__(self):
         self.lock = asyncio.Lock()
@@ -130,6 +132,11 @@ class Peripheral(ABC):
         """Does whatever persistent action is needed."""
         assert self.initialized
 
+    @classmethod
+    def create_address_byte(cls, command: str) -> str:
+        combined_hex = cls.ADDRESS | cls.COMMANDS[command]
+        return f"{combined_hex:x}"
+
 
 class BillValidator(Peripheral):
     # Data for these taken from the official MDB specification.
@@ -147,12 +154,6 @@ class BillValidator(Peripheral):
     # How long the validator has to respond to a command before we reset it.
     # Given in the MDB specs.
     NON_RESPONSE_SECONDS = 5.0
-
-    @staticmethod
-    def create_address_byte(command: str) -> str:
-        combined_hex = BillValidator.ADDRESS | BillValidator.COMMANDS[command]
-        return f"{combined_hex:x}"
-
     # Shortcut for a frequently used command string.
     POLL_COMMAND = f"R,33\n"
 
@@ -173,6 +174,8 @@ class BillValidator(Peripheral):
 
         :param send_reset: Whether to send a reset command.
         :param poll_reset: Whether to poll for a JUST RESET."""
+        # assert (send_reset implies poll_reset)
+        assert (not send_reset) or poll_reset
         with self.lock:
             while True:
                 try:
@@ -231,7 +234,7 @@ class BillValidator(Peripheral):
                                         setup_data_bytes[11:]]
 
                     expansion_command = 'R,' + \
-                        self.create_address_byte('EXPANSION')
+                        self.create_address_byte('EXPANSION COMMAND')
                     if self.feature_level == 1:
                         expansion_command += ',00\n'
                     else:
