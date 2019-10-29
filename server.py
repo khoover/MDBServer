@@ -6,13 +6,9 @@ from mdb.master import Master
 from mdb.peripherals import CoinAcceptor, BillValidator
 from mdb.sniffer import Sniffer
 from usb_handler import USBHandler
-import websockets
+from websocket_client import WebsocketClient
 
 logger = logging.getLogger()
-
-
-class WebsocketClient:
-    pass
 
 
 async def main(args):
