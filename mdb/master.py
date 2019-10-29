@@ -31,7 +31,8 @@ class Master:
             raise RuntimeError('Unable to start master mode on MDB board.')
         if bus_reset:
             await self.send('R,RESET\n')
-            await asyncio.sleep(SETUP_TIME_SECONDS)
+            # The extra time is how long the bus reset takes.
+            await asyncio.sleep(SETUP_TIME_SECONDS + 0.1)
         validator_init = asyncio.create_task(
             bill_validator.initialize(self, not bus_reset))
         acceptor_init = asyncio.create_task(
