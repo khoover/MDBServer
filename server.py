@@ -5,7 +5,6 @@ from mdb.cashless_slave import CashlessSlave
 from mdb.master import Master
 from mdb.peripherals import CoinAcceptor, BillValidator
 from mdb.sniffer import Sniffer
-import sys
 from usb_handler import USBHandler
 import websockets
 
@@ -22,11 +21,14 @@ async def main(args):
     bill_validator = BillValidator()
     coin_acceptor = CoinAcceptor()
     cashless_slave = CashlessSlave()
-    runners = [handler.run(), master.run(), cashless_slave.run()]
-    # Order of initialization matters here; USB Handler has to be first, in
-    # case the users try sending strings in their initialization.
+    runners = [master.run(), cashless_slave.run()]
     try:
+        # Order of initialization matters here; USB Handler has to be first, in
+        # case the users try sending strings in their initialization.
         await handler.initialize(args.device_path)
+        # Have to get the USB Handler running now so all the MDB users can
+        # communicate on the port.
+        runners.append(asyncio.create_task(handler.run()))
         if args.sniff:
             # Get the sniffer up and running before everything else
             # MDB-related, so it can report everything.
