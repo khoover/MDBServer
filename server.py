@@ -5,6 +5,7 @@ from mdb.cashless_slave import CashlessSlave
 from mdb.master import Master
 from mdb.peripherals import CoinAcceptor, BillValidator
 from mdb.sniffer import Sniffer
+import sys
 from usb_handler import USBHandler
 import websockets
 
@@ -17,37 +18,33 @@ class WebsocketClient:
 
 async def main(args):
     handler = USBHandler()
-    # Order of initialization matters here; USB Handler has to be first, in
-    # case the users try sending strings in their initialization.
-    await handler.initialize(args.device_path)
-    if args.sniff:
-        sniffer = Sniffer()
-        await sniffer.initialize(handler)
     master = Master()
     bill_validator = BillValidator()
     coin_acceptor = CoinAcceptor()
-    init_tasks = []
-    init_tasks.append(asyncio.create_task(master.initialize(handler,
-                                                            bill_validator,
-                                                            coin_acceptor)))
-    done, _ = asyncio.wait(init_tasks, return_when=asyncio.FIRST_EXCEPTION)
-    bad_initialization = False
-    for t in done:
-        if t.exception():
-            bad_initialization = True
-            logger.critical("Encountered an error initializing a component.",
-                            exc_info=t.exception())
-    if bad_initialization:
-        raise RuntimeError("Unable to initialize the server, see logs for "
-                           "details.")
-    run_tasks = []
-    run_tasks.append(asyncio.create_task(handler.run()))
-    run_tasks.append(asyncio.create_task(sniffer.run()))
-    done, _ = asyncio.wait(run_tasks, return_when=asyncio.FIRST_EXCEPTION)
-    for t in done:
-        if t.exception():
-            logger.critical("Encountered an unhandled exception while running"
-                            "the server.", exc_info=t.exception())
+    cashless_slave = CashlessSlave()
+    runners = [handler.run(), master.run(), cashless_slave.run()]
+    # Order of initialization matters here; USB Handler has to be first, in
+    # case the users try sending strings in their initialization.
+    try:
+        await handler.initialize(args.device_path)
+        if args.sniff:
+            # Get the sniffer up and running before everything else
+            # MDB-related, so it can report everything.
+            sniffer = Sniffer()
+            await sniffer.initialize(handler)
+            runners.append(asyncio.create_task(sniffer.run()))
+        asyncio.gather(master.initialize(handler, bill_validator,
+                                         coin_acceptor),
+                       cashless_slave.initialize(handler))
+    except Exception as e:
+        logger.critical("Unable to initialize the server, an error occurred.",
+                        exc_info=e)
+        return
+    try:
+        await asyncio.gather(*runners)
+    except Exception as e:
+        logger.critical("Encountered an unhandled exception while running the"
+                        " server, exiting.", exc_info=e)
 
 
 if __name__ == "__main__":
