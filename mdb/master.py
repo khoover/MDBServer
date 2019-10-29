@@ -33,11 +33,8 @@ class Master:
             await self.send('R,RESET\n')
             # The extra time is how long the bus reset takes.
             await asyncio.sleep(SETUP_TIME_SECONDS + 0.1)
-        validator_init = asyncio.create_task(
-            bill_validator.initialize(self, not bus_reset))
-        acceptor_init = asyncio.create_task(
-            coin_acceptor.initialize(self, not bus_reset))
-        asyncio.wait((validator_init, acceptor_init))
+        await asyncio.gather(bill_validator.initialize(self, not bus_reset),
+                             coin_acceptor.initialize(self, not bus_reset))
 
     async def send(self, message: str) -> None:
         assert self.initialized
@@ -51,20 +48,15 @@ class Master:
 
     async def enable(self):
         assert self.initialized
-        validator_enable = asyncio.create_task(self.bill_validator.enable())
-        acceptor_enable = asyncio.create_task(self.coin_acceptor.enable())
-        done, _ = await asyncio.wait((validator_enable, acceptor_enable))
-        for t in done:
-            if t.exception():
-                logger.error("Had an error enabling an MDB device: "
-                             f"{t.exception()}")
+        await asyncio.gather(self.bill_validator.enable(),
+                             self.coin_acceptor.enable())
 
     async def disable(self):
         assert self.initialized
-        validator_disable = asyncio.create_task(self.bill_validator.disable())
-        acceptor_disable = asyncio.create_task(self.coin_acceptor.disable())
-        done, _ = await asyncio.wait((validator_disable, acceptor_disable))
-        for t in done:
-            if t.exception():
-                logger.error("Had an error disabling an MDB device: "
-                             f"{t.exception()}")
+        await asyncio.gather(self.bill_validator.disable(),
+                             self.coin_acceptor.disable())
+
+    async def run(self):
+        assert self.initialized
+        await asyncio.gather(self.bill_validator.run(),
+                             self.coin_acceptor.run())
