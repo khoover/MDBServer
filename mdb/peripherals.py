@@ -20,11 +20,16 @@ class NonResponseError(Exception):
 
 
 class Peripheral(ABC):
-    """Generic implementation of an MDB peripheral interface."""
+    """Generic implementation of an MDB peripheral interface.
+
+    In addition to the methods decorated with abstractmethod, subclasses should
+    also define the following class constants: NON_RESPONSE_SECONDS, ADDRESS,
+    and COMMANDS."""
     lock: asyncio.Lock
-    NON_RESPONSE_SECONDS: float
     POLLING_INTERVAL_SECONDS = 0.1
     BOARD_RESPONSE_PREFIX = 'p'
+    # These should be defined in subclasses implementing peripherals.
+    NON_RESPONSE_SECONDS: float
     ADDRESS: int
     COMMANDS: Dict[str, int]
 
@@ -32,7 +37,6 @@ class Peripheral(ABC):
         self.lock = asyncio.Lock()
         self.initialized = False
 
-    @abstractmethod
     async def initialize(self, master, send_reset=True) -> None:
         """Initialization code for the peripheral.
 
@@ -45,6 +49,12 @@ class Peripheral(ABC):
                      f"{self.__class__.__name__}.")
         self.initialized = True
         self.master = master
+        try:
+            await asyncio.wait_for(self.reset(send_reset), 30)
+        except asyncio.TimeoutError:
+            logger.critical('Unable to initialize peripheral: '
+                            f'{self.__class__.__name}.')
+            raise
 
     async def send(self, message: str) -> None:
         assert self.initialized
@@ -157,14 +167,6 @@ class BillValidator(Peripheral):
     # Shortcut for a frequently used command string.
     POLL_COMMAND = f"R,33\n"
 
-    async def initialize(self, master, send_reset=True) -> None:
-        await super().initialize(master, send_reset)
-        try:
-            await asyncio.wait_for(self.reset(send_reset), 30)
-        except asyncio.TimeoutError:
-            logger.critical('Unable to start the bill validator.')
-            raise
-
     async def reset(self, send_reset=True, poll_reset=True) -> None:
         """Resets the bill validator.
 
@@ -268,7 +270,7 @@ class BillValidator(Peripheral):
                     poll_reset = True
                     continue
 
-    async def handle_poll_responses(self, responses: Sequence[str]):
+    async def handle_poll_responses(self, responses: Sequence[str]) -> None:
         pass
 
 
