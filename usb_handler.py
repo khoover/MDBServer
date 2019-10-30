@@ -91,13 +91,26 @@ class USBHandler:
         self.send(message, _drain=False)
         fut = self._read_internal(prefix)
         await self.serial_writer.drain()
-        await fut
+        try:
+            await fut
+        except asyncio.CancelledError as e:
+            self.logger.warning("Got cancelled while waiting for reply to "
+                                "message %r on %s", message, prefix,
+                                exc_info=e)
+            del self.waiters[prefix]
+            raise
         self.logger.info("Got message: %s", fut.result())
         return fut.result()
 
     async def read(self, prefix: str) -> str:
         fut = self._read_internal(prefix)
-        await fut
+        try:
+            await fut
+        except asyncio.CancelledError as e:
+            self.logger.warning("Got cancelled while waiting for message on "
+                                "%s", prefix, exc_info=e)
+            del self.waiters[prefix]
+            raise
         self.logger.info("Got message: %s", fut.result())
         return fut.result()
 
