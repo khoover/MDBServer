@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 import asyncio
+import functools
 import logging
 import time
 from typing import Sequence, Dict
@@ -18,6 +19,37 @@ class NonResponseError(Exception):
         self.peripheral = peripheral
 
 
+def reset_wrapper(timeout=None):
+    """Convenient decorator for the 'try MDB communication, reset on
+    non-response' pattern. Assumes the wrapped function is a method of
+    Peripheral or an implementing subclass.
+
+    :param timeout: How long to wait, in seconds, for the reset to occur before
+    giving up. The timeout will be left unhandled. If None, will attempt to
+    reset forever."""
+    def inner(func):
+        assert asyncio.iscoroutinefunction(func)
+        @functools.wraps(func)
+        async def wrapper(self: Peripheral, *args, **kwargs):
+            try:
+                await func(self, *args, **kwargs)
+            except NonResponseError as e:
+                self.logger.warning('Timed out communicating with %s, command '
+                                    'was %r', e.peripheral, e.command,
+                                    exc_info=e)
+                if timeout:
+                    try:
+                        await asyncio.wait_for(self.reset(True, True), timeout)
+                    except TimeoutError as timeout_error:
+                        self.logger.error('Reset timed out for %s.',
+                                          e.peripheral, exc_info=timeout_error)
+                        raise
+                else:
+                    await self.reset(True, True)
+        return wrapper
+    return inner
+
+
 class Peripheral(ABC):
     """Generic implementation of an MDB peripheral interface.
 
@@ -25,6 +57,8 @@ class Peripheral(ABC):
     also define the following class constants: NON_RESPONSE_SECONDS, ADDRESS,
     and COMMANDS."""
     lock: asyncio.Lock
+    initialized: bool
+    logger: logging.Logger
     POLLING_INTERVAL_SECONDS = 0.1
     BOARD_RESPONSE_PREFIX = 'p'
     # These should be defined in subclasses implementing peripherals.
@@ -236,24 +270,23 @@ class BillValidator(Peripheral):
                     self.security_level_bitvector = int(setup_data_bytes[8] +
                                                         setup_data_bytes[9],
                                                         base=16)
-                    # I don't know whether it uses caps or not for hex.
-                    self.has_escrow = setup_data_bytes[10] != '00'
+                    self.has_escrow = setup_data_bytes[10].upper() == 'FF'
                     self.bill_values = [int(x, base=16) for x in
                                         setup_data_bytes[11:]]
 
+                    self.logger.info('Getting bill validator expansion '
+                                     'information.')
                     expansion_command = 'R,' + \
                         self.create_address_byte('EXPANSION COMMAND')
                     if self.feature_level == 1:
                         expansion_command += ',00\n'
                     else:
                         expansion_command += ',02\n'
-                    self.logger.info('Getting bill validator expansion '
-                                     'information.')
                     self.expansion_data = \
                         await self.sendread_nolock_until_data_or_nack(
                             expansion_command)
                     self.logger.info('Got expansion data for bill validator: '
-                                     f'{self.expansion_data}')
+                                     '%r', self.expansion_data)
 
                     self.logger.info('Getting stacked bill count.')
                     stacker_count = \
@@ -283,3 +316,6 @@ class BillValidator(Peripheral):
 
 class CoinAcceptor(Peripheral):
     pass
+
+
+__all__ = (Peripheral, NonResponseError, BillValidator, CoinAcceptor)
