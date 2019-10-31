@@ -124,7 +124,7 @@ class Peripheral(ABC):
         non_response_reply = self.BOARD_RESPONSE_PREFIX + ',NACK'
         message_status = await self.sendread_nolock(message)
         start = time.time()
-        while message_status == self.BOARD_RESPONSE_PREFIX + ',NACK' and \
+        while message_status == non_response_reply and \
                 time.time() - start < self.NON_RESPONSE_SECONDS:
             asyncio.sleep(self.POLLING_INTERVAL_SECONDS)  # Ratelimiting
             message_status = await self.sendread_nolock(message)
