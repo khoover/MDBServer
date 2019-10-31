@@ -354,7 +354,6 @@ class BillValidator(Peripheral):
                                         e.command, exc_info=e)
                     send_reset = True
                     poll_reset = True
-                    continue
 
     async def handle_poll_responses(self, responses: Sequence[int]) -> None:
         reset_task = None
