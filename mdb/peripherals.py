@@ -390,19 +390,19 @@ class BillValidator(Peripheral):
     @reset_wrapper
     async def enable(self) -> None:
         await super().enable()
-        await self.sendread_nolock_until_timeout(self.enable_command)
+        await self.sendread_until_timeout(self.enable_command)
 
     @reset_wrapper
     async def disable(self) -> None:
         await super().disable()
         disable_command = f"R,{self.create_address_byte('BILL TYPE')},0000\n"
-        await self.sendread_nolock_until_timeout(disable_command)
+        await self.sendread_until_timeout(disable_command)
 
     async def run(self) -> None:
         await super().run()
         while True:
             try:
-                response = await self.sendread_nolock_until_data_or_nack(
+                response = await self.sendread_until_data_or_nack(
                     self.POLL_COMMAND)
                 response_statuses = [int(response[i:i+2], base=16) for
                                      i in range(2, len(response), 2)]
