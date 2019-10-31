@@ -334,6 +334,7 @@ class BillValidator(Peripheral):
                         f"{self.bill_enable_bitvector:x}\n"
                     await self.sendread_nolock_until_timeout(
                         self.enable_command)
+                    return
                 except NonResponseError as e:
                     self.logger.warning("Bill validator timed out while "
                                         "resetting, command was '%r'.",
