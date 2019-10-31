@@ -35,11 +35,11 @@ class USBHandler:
     async def initialize(self, device_path: str) -> None:
         assert os.path.exists(device_path)
         self.logger.info("Initializing USBReader.")
-        self.initialized = True
         self.logger.debug("Opening serial connection to device at %s",
                           device_path)
         self.serial_reader, self.serial_writer = \
             await open_serial_connection(url=device_path, baudrate=115200)
+        self.initialized = True
         self.logger.debug("Connected to serial device at %s.", device_path)
 
     async def run(self) -> None:

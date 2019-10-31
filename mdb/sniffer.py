@@ -10,13 +10,12 @@ class Sniffer:
 
     async def initialize(self, usb_handler: USBHandler):
         self.logger.debug("Initializing MDB sniffer.")
-        self.initialized = True
         self.usb_handler = usb_handler
         status = await usb_handler.sendread(to_ascii('X,1\n'), 'x')
         if status != 'x,ACK':
             raise RuntimeError(f"Unable to start MDB sniffer, got {status}")
-        else:
-            self.logger.debug("Sniffer initialized")
+        self.initialized = True
+        self.logger.debug("Sniffer initialized")
         self.message_queue = usb_handler.listen('x')
 
     async def run(self):

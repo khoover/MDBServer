@@ -82,7 +82,6 @@ class Peripheral(ABC):
         :param send_reset: whether to send a reset command or not"""
         self.logger.debug("Initializing peripheral of type %s.",
                           self.__class__.__name__)
-        self.initialized = True
         self.master = master
         try:
             await asyncio.wait_for(self.reset(send_reset), 30)
@@ -90,9 +89,9 @@ class Peripheral(ABC):
             self.logger.critical('Unable to initialize peripheral: %s',
                                  self.__class__.__name__)
             raise
+        self.initialized = True
 
     async def send(self, message: str) -> None:
-        assert self.initialized
         async with self.lock:
             await self.master.send(message)
 
@@ -100,18 +99,17 @@ class Peripheral(ABC):
         """Sends a message without acquiring the peripheral's lock. Assumes the
         caller or a parent has acquired the lock. Must not be used to
         circumvent the locking mechanism."""
-        assert self.initialized and self.lock.locked()
+        assert self.lock.locked()
         await self.master.send(message)
 
     async def sendread(self, message: str) -> str:
-        assert self.initialized
         async with self.lock:
             return await self.master.sendread(message,
                                               self.BOARD_RESPONSE_PREFIX)
 
     async def sendread_nolock(self, message: str) -> str:
         """Similar to send_nolock, except for sendread."""
-        assert self.initialized and self.lock.locked()
+        assert self.lock.locked()
         return await self.master.sendread(message, self.BOARD_RESPONSE_PREFIX)
 
     # Next are utility methods so that implementations only have to worry about
@@ -156,11 +154,11 @@ class Peripheral(ABC):
         return message_status
 
     @abstractmethod
-    async def reset(self, send_reset=True) -> None:
+    async def reset(self, send_reset=True, poll_reset=True) -> None:
         """Resets the peripheral.
 
         :param send_reset: Whether to send the reset command or not."""
-        assert self.initialized
+        pass
 
     @abstractmethod
     async def enable(self) -> None:
@@ -213,7 +211,7 @@ class BillValidator(Peripheral):
         :param poll_reset: Whether to poll for a JUST RESET."""
         # assert (send_reset implies poll_reset)
         assert (not send_reset) or poll_reset
-        super().reset(send_reset, poll_reset)
+        await super().reset(send_reset, poll_reset)
         with self.lock:
             while True:
                 try:
@@ -296,12 +294,25 @@ class BillValidator(Peripheral):
                     self.stacker_count = (~0x8000) & stacker_count
                     self.stacker_full = stacker_count >= 0x8000
 
-                    bills_to_enable = [int(x > 0 and x < 0xff) for x in
-                                       self.bill_values]
+                    # Could have a MAX_VALUE constant with the maximum bill
+                    # value (in cents) that ChezBob is willing to accept? I've
+                    # picked $20 as just being a reasonable number.
+                    bills_to_enable = [int(x > 0 and
+                                           x <= (2000 // self.scaling_factor))
+                                       for x in self.bill_values]
                     bills_to_enable.extend([0] * (16 - len(self.bill_values)))
+                    bills_to_enable.reverse()
                     # TODO: Figure out how this should be converted into a
                     # bitvector. It's not clear if I need to reverse the list
-                    # before doing the shift-and-add.
+                    # before doing the shift-and-add, or if something else
+                    # weird happens.
+                    self.bill_enable_bitvector = int(''.join(bills_to_enable),
+                                                     base=2)
+                    enable_command = \
+                        f"R,{self.create_address_byte('BILL TYPE')}," \
+                        f"{self.bill_enable_bitvector:x}" \
+                        f"{self.bill_enable_bitvector:x}\n"
+                    await self.sendread_nolock_until_timeout(enable_command)
                 except NonResponseError as e:
                     self.logger.warning("Bill validator timed out while "
                                         "resetting, command was '%r'.",
@@ -312,6 +323,17 @@ class BillValidator(Peripheral):
 
     async def handle_poll_responses(self, responses: Sequence[str]) -> None:
         pass
+
+    @reset_wrapper
+    async def enable(self) -> None:
+        await super().enable()
+
+    @reset_wrapper
+    async def disable(self) -> None:
+        await super().disable()
+
+    async def run(self) -> None:
+        await super().run()
 
 
 class CoinAcceptor(Peripheral):
