@@ -26,7 +26,9 @@ class Master:
         self.bill_validator = bill_validator
         self.coin_acceptor = coin_acceptor
         self.logger.debug('Enabling Master driver.')
-        status = await self.sendread('M,1\n', 'm')
+        status = None
+        async with self.lock:
+            status = await self.usb_handler.sendread(to_ascii('M,1\n'), 'm')
         if status != 'm,ACK':
             raise RuntimeError('Unable to start master mode on MDB board.')
         self.initialized = True
@@ -40,10 +42,12 @@ class Master:
                              coin_acceptor.initialize(self, not bus_reset))
 
     async def send(self, message: str) -> None:
+        assert self.initialized
         async with self.lock:
             await self.usb_handler.send(to_ascii(message))
 
     async def sendread(self, message: str, prefix: str) -> str:
+        assert self.initialized
         async with self.lock:
             return await self.usb_handler.sendread(to_ascii(message), prefix)
 
