@@ -31,7 +31,7 @@ async def main(args):
             sniffer = Sniffer()
             await sniffer.initialize(handler)
             runners.append(asyncio.create_task(sniffer.run()))
-        asyncio.gather(master.initialize(handler, bill_validator,
+        await asyncio.gather(master.initialize(handler, bill_validator,
                                          coin_acceptor),
                        cashless_slave.initialize(handler))
     except Exception as e:
