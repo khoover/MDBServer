@@ -43,7 +43,7 @@ def reset_wrapper(timeout=None):
                     except TimeoutError as timeout_error:
                         self.logger.error('Reset timed out for %s.',
                                           e.peripheral, exc_info=timeout_error)
-                        raise
+                        raise timeout_error from None
                 else:
                     await self.reset(True, True)
         return wrapper
@@ -65,6 +65,12 @@ class Peripheral(ABC):
     NON_RESPONSE_SECONDS: float
     ADDRESS: int
     COMMANDS: Dict[str, int]
+    # How long to try resetting before giving up and timing out when
+    # initializing a peripheral.
+    INIT_RESET_TIMEOUT = 60
+    # How long to wait in-between sending RESETs to a peripheral when the
+    # peripheral isn't responding.
+    RESET_RETRY_SLEEP = 5
 
     def __init__(self):
         self.lock = asyncio.Lock()
@@ -84,7 +90,8 @@ class Peripheral(ABC):
                           self.__class__.__name__)
         self.master = master
         try:
-            await asyncio.wait_for(self.reset(send_reset), 30)
+            await asyncio.wait_for(self.reset(send_reset),
+                                   self.INIT_RESET_TIMEOUT)
         except asyncio.TimeoutError:
             self.logger.critical('Unable to initialize peripheral: %s',
                                  self.__class__.__name__)
@@ -199,6 +206,28 @@ class BillValidator(Peripheral):
     NON_RESPONSE_SECONDS = 5.0
     # Shortcut for a frequently used command string.
     POLL_COMMAND = f"R,33\n"
+    POLL_INFO_STATUSES = {
+        0x03: 'Validator busy - cannot answer a detailed command right now.',
+        0x09: 'Validator disabled.',
+        0x0b: 'Bill rejected - could not be identified.'
+    }
+    POLL_WARNING_STATUSES = {
+        0x07: 'A bill was returned by unknown means.',
+        0x0a: 'Invalid ESCROW request - an ESCROW request was made while no'
+              'bill was in escrow.'
+    }
+    POLL_CRITICAL_STATUSES = {
+        0x01: "Defective motor - one of the motors failed to perform.",
+        0x02: "Sensor problem - one of the sensors has failed to provide a "
+              "response.",
+        0x04: "ROM checksum error - the validator's internal checksum does "
+              "not match the computed one.",
+        0x05: "Validator jammed - a bill has jammed in the acceptance path.",
+        0x08: "Cash box out of position - the cash box has been opened or "
+              "removed.",
+        0x0c: "Possible credited bill removal - someone tried to remove a "
+              "credited bill."
+    }
 
     async def reset(self, send_reset=True, poll_reset=True) -> None:
         """Resets the bill validator.
@@ -216,14 +245,19 @@ class BillValidator(Peripheral):
             while True:
                 try:
                     if send_reset:
-                        command = "R," + self.create_address_byte('RESET') + \
-                                "\n"
+                        command = f"R,{self.create_address_byte('RESET')}\n"
                         self.logger.info('Sending reset command to bill '
                                          'validator.')
-                        # Only responses are ACK or NACK, and this will throw
-                        # a NonResponseError if all we get is NACK.
-                        await self.sendread_nolock_until_timeout(command)
-                        await asyncio.sleep(SETUP_TIME_SECONDS)
+                        response = await self.sendread_nolock(command)
+                        if response == 'p,ACK':
+                            await asyncio.sleep(SETUP_TIME_SECONDS)
+                        else:
+                            self.logger.warning('No response to RESET, '
+                                                'sleeping and retrying.')
+                            await asyncio.sleep(self.RESET_RETRY_SLEEP)
+                            # send_reset = True
+                            # poll_reset = True, from the assert.
+                            continue
                     # Poll until JUST RESET
                     if poll_reset:
                         self.logger.info('Polling bill validator for JUST '
@@ -231,20 +265,20 @@ class BillValidator(Peripheral):
                         response = \
                             await self.sendread_nolock_until_data_or_nack(
                                 self.POLL_COMMAND)
-                        response_statuses = [response[i:i+2] for
+                        response_statuses = [int(response[i:i+2], base=16) for
                                              i in range(2, len(response), 2)]
                         # 0x06 is the code for JUST RESET.
-                        if '06' not in response_statuses:
+                        if 0x06 not in response_statuses:
                             self.logger.warning("Did not get JUST RESET in the"
                                                 " first poll after resetting,"
-                                                " trynig again.")
+                                                " trying again.")
                             send_reset = True
                             # poll_reset = True
                             continue
                         # Pass off the remaining responses to the poll handler
                         # in the background.
                         asyncio.create_task(self.handle_poll_responses(
-                            [x for x in response_statuses if x != '06']))
+                            [x for x in response_statuses if x != 0x06]))
 
                     self.logger.info('Getting bill validator setup '
                                      'information.')
@@ -308,32 +342,81 @@ class BillValidator(Peripheral):
                     # weird happens.
                     self.bill_enable_bitvector = int(''.join(bills_to_enable),
                                                      base=2)
-                    enable_command = \
+                    self.enable_command = \
                         f"R,{self.create_address_byte('BILL TYPE')}," \
                         f"{self.bill_enable_bitvector:x}" \
                         f"{self.bill_enable_bitvector:x}\n"
-                    await self.sendread_nolock_until_timeout(enable_command)
+                    await self.sendread_nolock_until_timeout(
+                        self.enable_command)
                 except NonResponseError as e:
                     self.logger.warning("Bill validator timed out while "
                                         "resetting, command was '%r'.",
-                                        e.command)
+                                        e.command, exc_info=e)
                     send_reset = True
                     poll_reset = True
                     continue
 
-    async def handle_poll_responses(self, responses: Sequence[str]) -> None:
-        pass
+    async def handle_poll_responses(self, responses: Sequence[int]) -> None:
+        reset_task = None
+        for response in responses:
+            if response in self.POLL_CRITICAL_STATUSES:
+                self.logger.critical(self.POLL_CRITICAL_STATUSES[response])
+            elif response in self.POLL_INFO_STATUSES:
+                self.logger.info(self.POLL_INFO_STATUSES[response])
+            elif response in self.POLL_WARNING_STATUSES:
+                self.logger.warning(self.POLL_WARNING_STATUSES[response])
+            elif response & 0x80 == 0x80:
+                # This is a payment code, should do something about that.
+                pass
+            elif response == 0x06:
+                # Unsolicited JUST RESET
+                if not reset_task:
+                    reset_task = asyncio.create_task(self.reset(False, False))
+            elif response & 0x40 == 0x40:
+                # Attempted bill insertion while disabled
+                count = response & (0x20 - 1)
+                if count > 1:
+                    bill = 'bills'
+                else:
+                    bill = 'bill'
+                self.logger.info('Since last poll, people tried inserting %d '
+                                 '%s while the validator was disabled.', count,
+                                 bill)
+            else:
+                self.logger.warning('Unknown poll response received: %#02d',
+                                    response)
+        if reset_task:
+            await reset_task
 
     @reset_wrapper
     async def enable(self) -> None:
         await super().enable()
+        await self.sendread_nolock_until_timeout(self.enable_command)
 
     @reset_wrapper
     async def disable(self) -> None:
         await super().disable()
+        disable_command = f"R,{self.create_address_byte('BILL TYPE')},0000\n"
+        await self.sendread_nolock_until_timeout(disable_command)
 
     async def run(self) -> None:
         await super().run()
+        while True:
+            try:
+                response = await self.sendread_nolock_until_data_or_nack(
+                    self.POLL_COMMAND)
+                response_statuses = [int(response[i:i+2], base=16) for
+                                     i in range(2, len(response), 2)]
+                response_handler = asyncio.create_task(
+                    self.handle_poll_responses(response_statuses))
+                await asyncio.sleep(self.POLLING_INTERVAL_SECONDS)
+                # Make sure we've finished processing the last batch before
+                # polling for a new one.
+                await response_handler
+            except NonResponseError as e:
+                self.logger.warning('Bill validator timed out while polling, '
+                                    'resetting.', exc_info=e)
+                await self.reset(True, True)
 
 
 class CoinAcceptor(Peripheral):
