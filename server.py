@@ -33,7 +33,7 @@ async def main(args):
             runners.append(asyncio.create_task(sniffer.run()))
         await asyncio.gather(master.initialize(handler, bill_validator,
                                          coin_acceptor),
-                       cashless_slave.initialize(handler))
+                             cashless_slave.initialize(handler))
     except Exception as e:
         logger.critical("Unable to initialize the server, an error occurred.",
                         exc_info=e)
