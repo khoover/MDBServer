@@ -74,7 +74,7 @@ class USBHandler:
         self.serial_writer.write(message)
         if _drain:
             await self.serial_writer.drain()
-        self.logger.info("Sent message to MDB board: %s", message)
+            self.logger.info("Sent message to MDB board: %s", message)
 
     def _read_internal(self, prefix: str) -> asyncio.Future:
         assert len(prefix) == 1
@@ -84,18 +84,20 @@ class USBHandler:
                                "all messages")
         fut = asyncio.Future()
         self.waiters[prefix] = fut
-        self.logger.info("Waiting for a single message of type: %s", prefix)
         return fut
 
     async def sendread(self, message: AsciiBytes, prefix: str) -> str:
         self.send(message, _drain=False)
         fut = self._read_internal(prefix)
-        await self.serial_writer.drain()
         try:
+            await self.serial_writer.drain()
+            self.logger.info("Sent message to MDB board: %s", message)
+            self.logger.info("Waiting for a single message of type: %s",
+                             prefix)
             await fut
         except asyncio.CancelledError as e:
-            self.logger.warning("Got cancelled while waiting for reply to "
-                                "message %r on %s", message, prefix,
+            self.logger.warning("Got cancelled while sending message %r or "
+                                "waiting on prefix %s", message, prefix,
                                 exc_info=e)
             del self.waiters[prefix]
             raise
@@ -104,6 +106,7 @@ class USBHandler:
 
     async def read(self, prefix: str) -> str:
         fut = self._read_internal(prefix)
+        self.logger.info("Waiting for a single message of type: %s", prefix)
         try:
             await fut
         except asyncio.CancelledError as e:
