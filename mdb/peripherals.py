@@ -90,7 +90,7 @@ class Peripheral(ABC):
                           self.__class__.__name__)
         self.master = master
         try:
-            await asyncio.wait_for(self.reset(send_reset),
+            await asyncio.wait_for(self.reset(send_reset, True),
                                    self.INIT_RESET_TIMEOUT)
         except asyncio.TimeoutError:
             self.logger.critical('Unable to initialize peripheral: %s',
