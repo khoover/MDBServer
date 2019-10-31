@@ -19,35 +19,21 @@ class NonResponseError(Exception):
         self.peripheral = peripheral
 
 
-def reset_wrapper(timeout=None):
+def reset_wrapper(func):
     """Convenient decorator for the 'try MDB communication, reset on
     non-response' pattern. Assumes the wrapped function is a method of
-    Peripheral or an implementing subclass.
-
-    :param timeout: How long to wait, in seconds, for the reset to occur before
-    giving up. The timeout will be left unhandled. If None, will attempt to
-    reset forever."""
-    def inner(func):
-        assert asyncio.iscoroutinefunction(func)
-        @functools.wraps(func)
-        async def wrapper(self: Peripheral, *args, **kwargs):
-            try:
-                await func(self, *args, **kwargs)
-            except NonResponseError as e:
-                self.logger.warning('Timed out communicating with %s, command '
-                                    'was %r', e.peripheral, e.command,
-                                    exc_info=e)
-                if timeout:
-                    try:
-                        await asyncio.wait_for(self.reset(True, True), timeout)
-                    except TimeoutError as timeout_error:
-                        self.logger.error('Reset timed out for %s.',
-                                          e.peripheral, exc_info=timeout_error)
-                        raise timeout_error from None
-                else:
-                    await self.reset(True, True)
-        return wrapper
-    return inner
+    Peripheral or an implementing subclass."""
+    assert asyncio.iscoroutinefunction(func)
+    @functools.wraps(func)
+    async def wrapper(self: Peripheral, *args, **kwargs):
+        try:
+            await func(self, *args, **kwargs)
+        except NonResponseError as e:
+            self.logger.warning('Timed out communicating with %s, command '
+                                'was %r', e.peripheral, e.command,
+                                exc_info=e)
+            await self.reset(True, True)
+    return wrapper
 
 
 class Peripheral(ABC):
