@@ -422,4 +422,5 @@ class CoinAcceptor(Peripheral):
     pass
 
 
-__all__ = (Peripheral, NonResponseError, BillValidator, CoinAcceptor)
+__all__ = (Peripheral, NonResponseError, BillValidator, CoinAcceptor,
+           SETUP_TIME_SECONDS)
