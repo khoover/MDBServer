@@ -104,10 +104,10 @@ class Peripheral(ABC):
             await self._master.send(message)
 
     async def send_no_lock(self, message: str) -> None:
-        """Sends a message without acquiring the peripheral's _lock. Assumes the
-        caller or a parent has acquired the _lock. Must not be used to
-        circumvent the _locking mechanism."""
-        assert self._lock._locked()
+        """Sends a message without acquiring the peripheral's lock. Assumes the
+        caller or a parent has acquired the lock. Must not be used to
+        circumvent the locking mechanism."""
+        assert self._lock.locked()
         await self._master.send(message)
 
     async def sendread(self, message: str) -> str:
@@ -117,7 +117,7 @@ class Peripheral(ABC):
 
     async def sendread_no_lock(self, message: str) -> str:
         """Similar to send_no_lock, except for sendread."""
-        assert self._lock._locked()
+        assert self._lock.locked()
         return await self._master.sendread(message, self.BOARD_RESPONSE_PREFIX)
 
     # Next are utility methods so that implementations only have to worry about
