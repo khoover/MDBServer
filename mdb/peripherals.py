@@ -13,26 +13,45 @@ class NonResponseError(Exception):
 
     Attributes:
         command -- The command that was supposed to be sent to the peripheral.
-        peripheral -- The peripheral the command was being sent to."""
+        peripheral -- The name of the peripheral the command was being sent
+                      to."""
     def __init__(self, command, peripheral):
         self.command = command
+        self.peripheral = peripheral
+
+
+class PeripheralResetError(Exception):
+    """Raised when a command is issued to a peripheral, and either the
+    peripheral is resetting or the peripheral resets during the command.
+
+    Attributes:
+        peripheral -- The name of the peripheral the command was being sent
+                      to."""
+    def __init__(self, peripheral):
         self.peripheral = peripheral
 
 
 def reset_wrapper(func):
     """Convenient decorator for the 'try MDB communication, reset on
     non-response' pattern. Assumes the wrapped function is a method of
-    Peripheral or an implementing subclass."""
+    Peripheral or an implementing subclass.
+
+    :raises PeripheralResetError: If the peripheral is resetting when the
+    function is called, or if the peripheral needs to reset due to
+    non-response."""
     assert asyncio.iscoroutinefunction(func)
     @functools.wraps(func)
     async def wrapper(self: Peripheral, *args, **kwargs):
+        if self._reset_task:
+            raise PeripheralResetError(self.__class__.__name)
         try:
             await func(self, *args, **kwargs)
         except NonResponseError as e:
             self.logger.warning('Timed out communicating with %s, command '
                                 'was %r', e.peripheral, e.command,
                                 exc_info=e)
-            await self.reset(True, True)
+            asyncio.create_task(self.reset(True, True))
+            raise PeripheralResetError(e.peripheral)
     return wrapper
 
 
@@ -42,9 +61,10 @@ class Peripheral(ABC):
     In addition to the methods decorated with abstractmethod, subclasses should
     also define the following class constants: NON_RESPONSE_SECONDS, ADDRESS,
     and COMMANDS."""
-    lock: asyncio.Lock
-    initialized: bool
-    logger: logging.Logger
+    _lock: asyncio.Lock
+    _initialized: bool
+    _reset_task: asyncio.Task
+    _logger: logging.Logger
     POLLING_INTERVAL_SECONDS = 0.1
     BOARD_RESPONSE_PREFIX = 'p'
     # These should be defined in subclasses implementing peripherals.
@@ -59,51 +79,46 @@ class Peripheral(ABC):
     RESET_RETRY_SLEEP = 5
 
     def __init__(self):
-        self.lock = asyncio.Lock()
-        self.initialized = False
-        self.logger = logging.getLogger('.'.join((__name__,
+        self._lock = asyncio.Lock()
+        self._initialized = False
+        self._reset_task = None
+        self._logger = logging.getLogger('.'.join((__name__,
                                                   self._class__.__name__)))
 
     async def initialize(self, master, send_reset=True) -> None:
         """Initialization code for the peripheral.
 
-        Feel free to send messages here, the USB interface will be initialized
+        Feel free to send messages here, the USB interface will be _initialized
         before this is called.
 
         :param master: the Master instance controlling this peripheral
         :param send_reset: whether to send a reset command or not"""
-        self.logger.debug("Initializing peripheral of type %s.",
+        self._logger.debug("Initializing peripheral of type %s.",
                           self.__class__.__name__)
-        self.master = master
-        try:
-            await asyncio.wait_for(self.reset(send_reset, True),
-                                   self.INIT_RESET_TIMEOUT)
-        except asyncio.TimeoutError:
-            self.logger.critical('Unable to initialize peripheral: %s',
-                                 self.__class__.__name__)
-            raise
-        self.initialized = True
+        self._master = master
+        self._initialized = True
+        self._init_task = asyncio.create_task(self.reset(send_reset, True))
 
     async def send(self, message: str) -> None:
-        async with self.lock:
-            await self.master.send(message)
+        async with self._lock:
+            await self._master.send(message)
 
-    async def send_nolock(self, message: str) -> None:
-        """Sends a message without acquiring the peripheral's lock. Assumes the
-        caller or a parent has acquired the lock. Must not be used to
-        circumvent the locking mechanism."""
-        assert self.lock.locked()
-        await self.master.send(message)
+    async def send_no_lock(self, message: str) -> None:
+        """Sends a message without acquiring the peripheral's _lock. Assumes the
+        caller or a parent has acquired the _lock. Must not be used to
+        circumvent the _locking mechanism."""
+        assert self._lock._locked()
+        await self._master.send(message)
 
     async def sendread(self, message: str) -> str:
-        async with self.lock:
-            return await self.master.sendread(message,
+        async with self._lock:
+            return await self._master.sendread(message,
                                               self.BOARD_RESPONSE_PREFIX)
 
-    async def sendread_nolock(self, message: str) -> str:
-        """Similar to send_nolock, except for sendread."""
-        assert self.lock.locked()
-        return await self.master.sendread(message, self.BOARD_RESPONSE_PREFIX)
+    async def sendread_no_lock(self, message: str) -> str:
+        """Similar to send_no_lock, except for sendread."""
+        assert self._lock._locked()
+        return await self._master.sendread(message, self.BOARD_RESPONSE_PREFIX)
 
     # Next are utility methods so that implementations only have to worry about
     # handling the reset after the non-response timeout.
@@ -120,14 +135,14 @@ class Peripheral(ABC):
             raise NonResponseError(message, self.__class__.__name__)
         return message_status
 
-    async def sendread_nolock_until_timeout(self, message: str) -> str:
+    async def sendread_no_lock_until_timeout(self, message: str) -> str:
         non_response_reply = self.BOARD_RESPONSE_PREFIX + ',NACK'
-        message_status = await self.sendread_nolock(message)
+        message_status = await self.sendread_no_lock(message)
         start = time.time()
         while message_status == non_response_reply and \
                 time.time() - start < self.NON_RESPONSE_SECONDS:
             asyncio.sleep(self.POLLING_INTERVAL_SECONDS)  # Ratelimiting
-            message_status = await self.sendread_nolock(message)
+            message_status = await self.sendread_no_lock(message)
         if message_status == non_response_reply:
             raise NonResponseError(message, self.__class__.__name__)
         return message_status
@@ -139,34 +154,45 @@ class Peripheral(ABC):
             message_status = await self.sendread_until_timeout(message)
         return message_status
 
-    async def sendread_nolock_until_data_or_nack(self, message: str) -> str:
-        message_status = await self.sendread_nolock_until_timeout(message)
+    async def sendread_no_lock_until_data_or_nack(self, message: str) -> str:
+        message_status = await self.sendread_no_lock_until_timeout(message)
         while message_status == self.BOARD_RESPONSE_PREFIX + ',ACK':
             asyncio.sleep(self.POLLING_INTERVAL_SECONDS)  # Ratelimiting
-            message_status = await self.sendread_nolock_until_timeout(message)
+            message_status = await self.sendread_no_lock_until_timeout(message)
         return message_status
 
     @abstractmethod
+    async def _reset(self, send_reset, poll_reset) -> None:
+        pass
+
     async def reset(self, send_reset=True, poll_reset=True) -> None:
         """Resets the peripheral.
 
-        :param send_reset: Whether to send the reset command or not."""
-        pass
+        :param send_reset: Whether to send the reset command or not.
+        :param poll_reset: Whether to poll for JUST RESET. Must be True if
+        send_reset is."""
+        # assert self._initialized and (send_reset implies poll_reset)
+        assert self._initialized and ((not send_reset) or poll_reset)
+        if not self._reset_task:
+            self._reset_task = asyncio.create_task(self._reset(send_reset,
+                                                               poll_reset))
+        await self._reset_task
 
     @abstractmethod
     async def enable(self) -> None:
         """Enables the peripheral for vending activities."""
-        assert self.initialized
+        assert self._initialized
 
     @abstractmethod
     async def disable(self) -> None:
         """Disables the peripheral for vending activities."""
-        assert self.initialized
+        assert self._initialized
 
     @abstractmethod
     async def run(self) -> None:
         """Does whatever persistent action is needed."""
-        assert self.initialized
+        assert self._initialized
+        await self._init_task
 
     @classmethod
     def create_address_byte(cls, command: str) -> str:
@@ -215,49 +241,38 @@ class BillValidator(Peripheral):
               "credited bill."
     }
 
-    async def reset(self, send_reset=True, poll_reset=True) -> None:
-        """Resets the bill validator.
-
-        Will only return once the validator is finished the reset command
-        sequence; should be wrapped with asyncio.wait_for if you want to
-        timeout the attempts.
-
-        :param send_reset: Whether to send a reset command.
-        :param poll_reset: Whether to poll for a JUST RESET."""
-        # assert (send_reset implies poll_reset)
-        assert (not send_reset) or poll_reset
-        await super().reset(send_reset, poll_reset)
-        with self.lock:
+    async def _reset(self, send_reset=True, poll_reset=True) -> None:
+        with self._lock:
             while True:
                 try:
                     if send_reset:
                         command = f"R,{self.create_address_byte('RESET')}\n"
-                        self.logger.info('Sending reset command to bill '
-                                         'validator.')
-                        response = await self.sendread_nolock(command)
+                        self._logger.info('Sending reset command to bill '
+                                          'validator.')
+                        response = await self.sendread_no_lock(command)
                         if response == 'p,ACK':
                             await asyncio.sleep(SETUP_TIME_SECONDS)
                         else:
-                            self.logger.warning('No response to RESET, '
-                                                'sleeping and retrying.')
+                            self._logger.warning('No response to RESET, '
+                                                 'sleeping and retrying.')
                             await asyncio.sleep(self.RESET_RETRY_SLEEP)
                             # send_reset = True
                             # poll_reset = True, from the assert.
                             continue
                     # Poll until JUST RESET
                     if poll_reset:
-                        self.logger.info('Polling bill validator for JUST '
-                                         'RESET.')
+                        self._logger.info('Polling bill validator for JUST '
+                                          'RESET.')
                         response = \
-                            await self.sendread_nolock_until_data_or_nack(
+                            await self.sendread_no_lock_until_data_or_nack(
                                 self.POLL_COMMAND)
                         response_statuses = [int(response[i:i+2], base=16) for
                                              i in range(2, len(response), 2)]
                         # 0x06 is the code for JUST RESET.
                         if 0x06 not in response_statuses:
-                            self.logger.warning("Did not get JUST RESET in the"
-                                                " first poll after resetting,"
-                                                " trying again.")
+                            self._logger.warning("Did not get JUST RESET in "
+                                                 "the first poll after "
+                                                 "resetting, trying again.")
                             send_reset = True
                             # poll_reset = True
                             continue
@@ -266,14 +281,14 @@ class BillValidator(Peripheral):
                         asyncio.create_task(self.handle_poll_responses(
                             [x for x in response_statuses if x != 0x06]))
 
-                    self.logger.info('Getting bill validator setup '
+                    self._logger.info('Getting bill validator setup '
                                      'information.')
-                    setup_data = await self.sendread_nolock_until_data_or_nack(
+                    setup_data = await self.sendread_no_lock_until_data_or_nack(
                         "R," + self.create_address_byte('SETUP') + "\n")
                     setup_data_bytes = [setup_data[i:i+2] for
                                         i in range(2, len(setup_data), 2)]
                     self.feature_level = int(setup_data_bytes[0], base=16)
-                    self.logger.debug('Bill validator level: %d',
+                    self._logger.debug('Bill validator level: %d',
                                       self.feature_level)
                     country_code = setup_data_bytes[1] + setup_data_bytes[2]
                     if country_code != '0001' and country_code != '1840':
@@ -292,7 +307,7 @@ class BillValidator(Peripheral):
                     self.bill_values = [int(x, base=16) for x in
                                         setup_data_bytes[11:]]
 
-                    self.logger.info('Getting bill validator expansion '
+                    self._logger.info('Getting bill validator expansion '
                                      'information.')
                     expansion_command = 'R,' + \
                         self.create_address_byte('EXPANSION COMMAND')
@@ -301,14 +316,14 @@ class BillValidator(Peripheral):
                     else:
                         expansion_command += ',02\n'
                     self.expansion_data = \
-                        await self.sendread_nolock_until_data_or_nack(
+                        await self.sendread_no_lock_until_data_or_nack(
                             expansion_command)
-                    self.logger.info('Got expansion data for bill validator: '
+                    self._logger.info('Got expansion data for bill validator: '
                                      '%r', self.expansion_data)
 
-                    self.logger.info('Getting stacked bill count.')
+                    self._logger.info('Getting stacked bill count.')
                     stacker_count = \
-                        await self.sendread_nolock_until_data_or_nack(
+                        await self.sendread_no_lock_until_data_or_nack(
                             'R,' + self.create_address_byte('STACKER') + '\n')
                     stacker_count = int(stacker_count[2:], base=16)
                     self.stacker_count = (~0x8000) & stacker_count
@@ -332,11 +347,12 @@ class BillValidator(Peripheral):
                         f"R,{self.create_address_byte('BILL TYPE')}," \
                         f"{self.bill_enable_bitvector:x}" \
                         f"{self.bill_enable_bitvector:x}\n"
-                    await self.sendread_nolock_until_timeout(
+                    await self.sendread_no_lock_until_timeout(
                         self.enable_command)
+                    self._reset_task = None
                     return
                 except NonResponseError as e:
-                    self.logger.warning("Bill validator timed out while "
+                    self._logger.warning("Bill validator timed out while "
                                         "resetting, command was '%r'.",
                                         e.command, exc_info=e)
                     send_reset = True
@@ -346,13 +362,15 @@ class BillValidator(Peripheral):
         reset_task = None
         for response in responses:
             if response in self.POLL_CRITICAL_STATUSES:
-                self.logger.critical(self.POLL_CRITICAL_STATUSES[response])
+                self._logger.critical(self.POLL_CRITICAL_STATUSES[response])
             elif response in self.POLL_INFO_STATUSES:
-                self.logger.info(self.POLL_INFO_STATUSES[response])
+                self._logger.info(self.POLL_INFO_STATUSES[response])
             elif response in self.POLL_WARNING_STATUSES:
-                self.logger.warning(self.POLL_WARNING_STATUSES[response])
+                self._logger.warning(self.POLL_WARNING_STATUSES[response])
             elif response & 0x80 == 0x80:
                 # This is a payment code, should do something about that.
+                # TODO: Need to check if I can get one of these from the same
+                # poll as a JUST RESET; could be confusing if we could.
                 pass
             elif response == 0x06:
                 # Unsolicited JUST RESET
@@ -365,11 +383,11 @@ class BillValidator(Peripheral):
                     bill = 'bills'
                 else:
                     bill = 'bill'
-                self.logger.info('Since last poll, people tried inserting %d '
+                self._logger.info('Since last poll, people tried inserting %d '
                                  '%s while the validator was disabled.', count,
                                  bill)
             else:
-                self.logger.warning('Unknown poll response received: %#02d',
+                self._logger.warning('Unknown poll response received: %#02d',
                                     response)
         if reset_task:
             await reset_task
@@ -400,7 +418,7 @@ class BillValidator(Peripheral):
                 # polling for a new one.
                 await response_handler
             except NonResponseError as e:
-                self.logger.warning('Bill validator timed out while polling, '
+                self._logger.warning('Bill validator timed out while polling, '
                                     'resetting.', exc_info=e)
                 await self.reset(True, True)
 
@@ -409,5 +427,5 @@ class CoinAcceptor(Peripheral):
     pass
 
 
-__all__ = (Peripheral, NonResponseError, BillValidator, CoinAcceptor,
-           SETUP_TIME_SECONDS)
+__all__ = (Peripheral, NonResponseError, PeripheralResetError, BillValidator,
+           CoinAcceptor, SETUP_TIME_SECONDS)
