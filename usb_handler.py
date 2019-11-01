@@ -82,7 +82,7 @@ class USBHandler:
             raise RuntimeError(f"Tried to wait for message type {prefix}"
                                " when there was already a queue listening to "
                                "all messages")
-        fut = asyncio.Future()
+        fut = asyncio.get_running_loop().create_future()
         self.waiters[prefix] = fut
         return fut
 
