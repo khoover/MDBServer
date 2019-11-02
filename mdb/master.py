@@ -2,6 +2,7 @@ import asyncio
 import logging
 from mdb.peripherals import BillValidator, CoinAcceptor, SETUP_TIME_SECONDS
 from usb_handler import USBHandler, to_ascii
+from typing import Sequence
 
 
 class Master:
@@ -51,17 +52,28 @@ class Master:
         async with self.lock:
             return await self.usb_handler.sendread(to_ascii(message), prefix)
 
-    async def enable(self):
+    async def enable(self) -> Sequence[Exception]:
         assert self.initialized
         self.logger.info("Enabling MDB peripherals.")
-        await asyncio.gather(self.bill_validator.enable(),
-                             self.coin_acceptor.enable())
+        return await asyncio.gather(self.bill_validator.enable(),
+                                    self.coin_acceptor.enable(),
+                                    return_exceptions=True)
 
-    async def disable(self):
+    async def disable(self) -> Sequence[Exception]:
         assert self.initialized
         self.logger.info("Disabling MDB peripherals.")
-        await asyncio.gather(self.bill_validator.disable(),
-                             self.coin_acceptor.disable())
+        return await asyncio.gather(self.bill_validator.disable(),
+                                    self.coin_acceptor.disable(),
+                                    return_exceptions=True)
+
+    async def status(self):
+        assert self.initialized
+        self.logger.info("Getting MDB peripheral statuses.")
+        # TODO: Figure out what this returns, exactly, and if I need to do any
+        # aggregating here.
+        return await asyncio.gather(self.bill_validator.status(),
+                                    self.coin_acceptor.status(),
+                                    return_exceptions=True)
 
     async def run(self):
         assert self.initialized
