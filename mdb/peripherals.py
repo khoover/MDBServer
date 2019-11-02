@@ -266,8 +266,8 @@ class BillValidator(Peripheral):
         super().__init__(*args, **kwargs)
         self._escrow_pending = False
 
-    async def _reset(self, send_reset, poll_reset, *args, **kwargs) -> None:
-        super()._reset(send_reset, poll_reset, *args, **kwargs)
+    async def _reset(self, send_reset, poll_reset) -> None:
+        super()._reset(send_reset, poll_reset)
         async with self._lock:
             self._escrow_pending = False
             while True:
@@ -494,7 +494,24 @@ class BillValidator(Peripheral):
 
 
 class CoinAcceptor(Peripheral):
-    pass
+    async def _reset(self, send_reset, poll_reset) -> None:
+        await super()._reset(send_reset, poll_reset)
+
+    @reset_wrapper
+    async def enable(self) -> None:
+        await super().enable()
+
+    @reset_wrapper
+    async def disable(self) -> None:
+        await super().disable()
+
+    @reset_wrapper
+    async def status(self):
+        await super().status()
+        # TODO: Decide what this is going to return.
+
+    async def run(self) -> None:
+        await super().run()
 
 
 __all__ = (Peripheral, NonResponseError, PeripheralResetError, PeripheralError,
