@@ -17,7 +17,8 @@ async def main(args):
     bill_validator = BillValidator()
     coin_acceptor = CoinAcceptor()
     cashless_slave = CashlessSlave()
-    runners = [master.run(), cashless_slave.run()]
+    websocket_client = WebsocketClient()
+    runners = [master.run(), cashless_slave.run(), websocket_client.run()]
     try:
         # Order of initialization matters here; USB Handler has to be first, in
         # case the users try sending strings in their initialization.
@@ -33,7 +34,8 @@ async def main(args):
             runners.append(asyncio.create_task(sniffer.run()))
         await asyncio.gather(master.initialize(handler, bill_validator,
                                                coin_acceptor),
-                             cashless_slave.initialize(handler))
+                             cashless_slave.initialize(handler),
+                             websocket_client.initialize())
     except Exception as e:
         logger.critical("Unable to initialize the server, an error occurred.",
                         exc_info=e)

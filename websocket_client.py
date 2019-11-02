@@ -4,4 +4,8 @@ import websockets
 
 
 class WebsocketClient:
-    pass
+    async def initialize(self):
+        pass
+
+    async def run(self):
+        pass
