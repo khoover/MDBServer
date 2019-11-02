@@ -434,7 +434,8 @@ class BillValidator(Peripheral):
             await reset_task
 
     # TODO: Decide how this bit is going to work. Could add stack_pending and
-    # return_pending variables?
+    # return_pending variables? At that point, though, why not just have a full
+    # state machine going on?
     @reset_wrapper
     async def stack_escrow(self) -> None:
         if not self._escrow_pending:
