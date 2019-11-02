@@ -8,7 +8,12 @@ from typing import Sequence, Dict
 SETUP_TIME_SECONDS = 0.2
 
 
-class NonResponseError(Exception):
+class PeripheralError(Exception):
+    """Base class for all peripheral-related errors."""
+    pass
+
+
+class NonResponseError(PeripheralError):
     """Raised when a peripheral does not respond by the non-response deadline.
 
     Attributes:
@@ -20,7 +25,7 @@ class NonResponseError(Exception):
         self.peripheral = peripheral
 
 
-class PeripheralResetError(Exception):
+class PeripheralResetError(PeripheralError):
     """Raised when a command is issued to a peripheral, and either the
     peripheral is resetting or the peripheral resets during the command.
 
@@ -31,10 +36,15 @@ class PeripheralResetError(Exception):
         self.peripheral = peripheral
 
 
+class InvalidEscrowError(PeripheralError):
+    """Raised when an escrow method is called, but no bill is in escrow."""
+    pass
+
+
 def reset_wrapper(func):
     """Convenient decorator for the 'try MDB communication, reset on
-    non-response' pattern. Assumes the wrapped function is a method of
-    Peripheral or an implementing subclass.
+    non-response' pattern. Assumes the wrapped function is a coroutine method
+    of Peripheral or an implementing subclass.
 
     :raises PeripheralResetError: If the peripheral is resetting when the
     function is called, or if the peripheral needs to reset due to
@@ -94,7 +104,7 @@ class Peripheral(ABC):
         :param master: the Master instance controlling this peripheral
         :param send_reset: whether to send a reset command or not"""
         self._logger.debug("Initializing peripheral of type %s.",
-                          self.__class__.__name__)
+                           self.__class__.__name__)
         self._master = master
         self._initialized = True
         self._init_task = asyncio.create_task(self.reset(send_reset, True))
@@ -103,7 +113,7 @@ class Peripheral(ABC):
         async with self._lock:
             await self._master.send(message)
 
-    async def send_no_lock(self, message: str) -> None:
+    async def send_nolock(self, message: str) -> None:
         """Sends a message without acquiring the peripheral's lock. Assumes the
         caller or a parent has acquired the lock. Must not be used to
         circumvent the locking mechanism."""
@@ -113,10 +123,10 @@ class Peripheral(ABC):
     async def sendread(self, message: str) -> str:
         async with self._lock:
             return await self._master.sendread(message,
-                                              self.BOARD_RESPONSE_PREFIX)
+                                               self.BOARD_RESPONSE_PREFIX)
 
-    async def sendread_no_lock(self, message: str) -> str:
-        """Similar to send_no_lock, except for sendread."""
+    async def sendread_nolock(self, message: str) -> str:
+        """Similar to send_nolock, except for sendread."""
         assert self._lock.locked()
         return await self._master.sendread(message, self.BOARD_RESPONSE_PREFIX)
 
@@ -135,14 +145,14 @@ class Peripheral(ABC):
             raise NonResponseError(message, self.__class__.__name__)
         return message_status
 
-    async def sendread_no_lock_until_timeout(self, message: str) -> str:
+    async def sendread_nolock_until_timeout(self, message: str) -> str:
         non_response_reply = self.BOARD_RESPONSE_PREFIX + ',NACK'
-        message_status = await self.sendread_no_lock(message)
+        message_status = await self.sendread_nolock(message)
         start = time.time()
         while message_status == non_response_reply and \
                 time.time() - start < self.NON_RESPONSE_SECONDS:
             asyncio.sleep(self.POLLING_INTERVAL_SECONDS)  # Ratelimiting
-            message_status = await self.sendread_no_lock(message)
+            message_status = await self.sendread_nolock(message)
         if message_status == non_response_reply:
             raise NonResponseError(message, self.__class__.__name__)
         return message_status
@@ -154,11 +164,11 @@ class Peripheral(ABC):
             message_status = await self.sendread_until_timeout(message)
         return message_status
 
-    async def sendread_no_lock_until_data_or_nack(self, message: str) -> str:
-        message_status = await self.sendread_no_lock_until_timeout(message)
+    async def sendread_nolock_until_data_or_nack(self, message: str) -> str:
+        message_status = await self.sendread_nolock_until_timeout(message)
         while message_status == self.BOARD_RESPONSE_PREFIX + ',ACK':
             asyncio.sleep(self.POLLING_INTERVAL_SECONDS)  # Ratelimiting
-            message_status = await self.sendread_no_lock_until_timeout(message)
+            message_status = await self.sendread_nolock_until_timeout(message)
         return message_status
 
     @abstractmethod
@@ -188,6 +198,12 @@ class Peripheral(ABC):
         """Disables the peripheral for vending activities."""
         assert self._initialized
 
+    # TODO: Decide what exactly this is going to return.
+    @abstractmethod
+    async def status(self):
+        """Returns the status of the peripheral."""
+        assert self._initialized
+
     @abstractmethod
     async def run(self) -> None:
         """Does whatever persistent action is needed."""
@@ -201,6 +217,7 @@ class Peripheral(ABC):
 
 
 class BillValidator(Peripheral):
+    _escrow_pending: bool
     # Data for these taken from the official MDB specification.
     ADDRESS = 0x30
     COMMANDS = {
@@ -216,6 +233,9 @@ class BillValidator(Peripheral):
     # How long the validator has to respond to a command before we reset it.
     # Given in the MDB specs.
     NON_RESPONSE_SECONDS = 5.0
+    # How long the validator has to respond with stacked, return, or invalid
+    # command after an escrow command.
+    ESCROW_RESPONSE_SECONDS = 30.0
     # Shortcut for a frequently used command string.
     POLL_COMMAND = f"R,33\n"
     POLL_INFO_STATUSES = {
@@ -241,15 +261,21 @@ class BillValidator(Peripheral):
               "credited bill."
     }
 
-    async def _reset(self, send_reset=True, poll_reset=True) -> None:
-        with self._lock:
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._escrow_pending = False
+
+    async def _reset(self, send_reset, poll_reset, *args, **kwargs) -> None:
+        super()._reset(send_reset, poll_reset, *args, **kwargs)
+        async with self._lock:
+            self._escrow_pending = False
             while True:
                 try:
                     if send_reset:
                         command = f"R,{self.create_address_byte('RESET')}\n"
                         self._logger.info('Sending reset command to bill '
                                           'validator.')
-                        response = await self.sendread_no_lock(command)
+                        response = await self.sendread_nolock(command)
                         if response == 'p,ACK':
                             await asyncio.sleep(SETUP_TIME_SECONDS)
                         else:
@@ -264,7 +290,7 @@ class BillValidator(Peripheral):
                         self._logger.info('Polling bill validator for JUST '
                                           'RESET.')
                         response = \
-                            await self.sendread_no_lock_until_data_or_nack(
+                            await self.sendread_nolock_until_data_or_nack(
                                 self.POLL_COMMAND)
                         response_statuses = [int(response[i:i+2], base=16) for
                                              i in range(2, len(response), 2)]
@@ -282,14 +308,14 @@ class BillValidator(Peripheral):
                             [x for x in response_statuses if x != 0x06]))
 
                     self._logger.info('Getting bill validator setup '
-                                     'information.')
-                    setup_data = await self.sendread_no_lock_until_data_or_nack(
+                                      'information.')
+                    setup_data = await self.sendread_nolock_until_data_or_nack(
                         "R," + self.create_address_byte('SETUP') + "\n")
                     setup_data_bytes = [setup_data[i:i+2] for
                                         i in range(2, len(setup_data), 2)]
                     self.feature_level = int(setup_data_bytes[0], base=16)
                     self._logger.debug('Bill validator level: %d',
-                                      self.feature_level)
+                                       self.feature_level)
                     country_code = setup_data_bytes[1] + setup_data_bytes[2]
                     if country_code != '0001' and country_code != '1840':
                         raise RuntimeError('Bill validator does not use USD, '
@@ -308,7 +334,7 @@ class BillValidator(Peripheral):
                                         setup_data_bytes[11:]]
 
                     self._logger.info('Getting bill validator expansion '
-                                     'information.')
+                                      'information.')
                     expansion_command = 'R,' + \
                         self.create_address_byte('EXPANSION COMMAND')
                     if self.feature_level == 1:
@@ -316,14 +342,14 @@ class BillValidator(Peripheral):
                     else:
                         expansion_command += ',02\n'
                     self.expansion_data = \
-                        await self.sendread_no_lock_until_data_or_nack(
+                        await self.sendread_nolock_until_data_or_nack(
                             expansion_command)
                     self._logger.info('Got expansion data for bill validator: '
-                                     '%r', self.expansion_data)
+                                      '%r', self.expansion_data)
 
                     self._logger.info('Getting stacked bill count.')
                     stacker_count = \
-                        await self.sendread_no_lock_until_data_or_nack(
+                        await self.sendread_nolock_until_data_or_nack(
                             'R,' + self.create_address_byte('STACKER') + '\n')
                     stacker_count = int(stacker_count[2:], base=16)
                     self.stacker_count = (~0x8000) & stacker_count
@@ -347,14 +373,14 @@ class BillValidator(Peripheral):
                         f"R,{self.create_address_byte('BILL TYPE')}," \
                         f"{self.bill_enable_bitvector:x}" \
                         f"{self.bill_enable_bitvector:x}\n"
-                    await self.sendread_no_lock_until_timeout(
+                    await self.sendread_nolock_until_timeout(
                         self.enable_command)
                     self._reset_task = None
                     return
                 except NonResponseError as e:
                     self._logger.warning("Bill validator timed out while "
-                                        "resetting, command was '%r'.",
-                                        e.command, exc_info=e)
+                                         "resetting, command was '%r'.",
+                                         e.command, exc_info=e)
                     send_reset = True
                     poll_reset = True
 
@@ -371,7 +397,22 @@ class BillValidator(Peripheral):
                 # This is a payment code, should do something about that.
                 # TODO: Need to check if I can get one of these from the same
                 # poll as a JUST RESET; could be confusing if we could.
-                pass
+                activity_type = (response & 0x70) >> 4
+                bill_type = response & 0x0f
+                if activity_type == 0x01:
+                    self._escrow_pending = True
+                elif activity_type == 0x00:
+                    # Bill stacked
+                    pass
+                elif activity_type == 0x02:
+                    # Bill returned
+                    pass
+                elif activity_type == 0x04:
+                    # Disabled bill rejected
+                    pass
+                else:
+                    self._logger.warning('Got an unknown stacker command: '
+                                         '%#01d', activity_type)
             elif response == 0x06:
                 # Unsolicited JUST RESET
                 if not reset_task:
@@ -384,24 +425,53 @@ class BillValidator(Peripheral):
                 else:
                     bill = 'bill'
                 self._logger.info('Since last poll, people tried inserting %d '
-                                 '%s while the validator was disabled.', count,
-                                 bill)
+                                  '%s while the validator was disabled.',
+                                  count, bill)
             else:
                 self._logger.warning('Unknown poll response received: %#02d',
-                                    response)
+                                     response)
         if reset_task:
             await reset_task
 
     @reset_wrapper
+    async def stack_escrow(self) -> None:
+        if not self._escrow_pending:
+            self._logger.warning("Told to stack bill, but none in escrow.")
+            raise InvalidEscrowError()
+        escrow_command = f"R,{self.create_address_byte('ESCROW')},01"
+        async with self._lock:
+            await self.sendread_nolock_until_timeout(escrow_command)
+            self._escrow_pending = False
+
+    @reset_wrapper
+    async def return_escrow(self) -> None:
+        if not self._escrow_pending:
+            self._logger.warning("Told to return bill, but none in escrow.")
+            raise InvalidEscrowError()
+        escrow_command = f"R,{self.create_address_byte('ESCROW')},00"
+        async with self._lock:
+            await self.sendread_nolock_until_timeout(escrow_command)
+            self._escrow_pending = False
+
+    @reset_wrapper
     async def enable(self) -> None:
         await super().enable()
-        await self.sendread_until_timeout(self.enable_command)
+        async with self._lock:
+            await self.sendread_nolock_until_timeout(self.enable_command)
 
     @reset_wrapper
     async def disable(self) -> None:
+        if self._escrow_pending:
+            await self.return_escrow()
         await super().disable()
         disable_command = f"R,{self.create_address_byte('BILL TYPE')},0000\n"
-        await self.sendread_until_timeout(disable_command)
+        async with self._lock:
+            await self.sendread_nolock_until_timeout(disable_command)
+
+    @reset_wrapper
+    async def status(self):
+        await super().status()
+        # TODO: Decide what this is going to return.
 
     async def run(self) -> None:
         await super().run()
@@ -419,7 +489,7 @@ class BillValidator(Peripheral):
                 await response_handler
             except NonResponseError as e:
                 self._logger.warning('Bill validator timed out while polling, '
-                                    'resetting.', exc_info=e)
+                                     'resetting.', exc_info=e)
                 await self.reset(True, True)
 
 
@@ -427,5 +497,5 @@ class CoinAcceptor(Peripheral):
     pass
 
 
-__all__ = (Peripheral, NonResponseError, PeripheralResetError, BillValidator,
-           CoinAcceptor, SETUP_TIME_SECONDS)
+__all__ = (Peripheral, NonResponseError, PeripheralResetError, PeripheralError,
+           InvalidEscrowError, BillValidator, CoinAcceptor, SETUP_TIME_SECONDS)
