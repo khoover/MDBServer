@@ -134,13 +134,14 @@ class Peripheral(ABC):
     # handling the reset after the non-response timeout.
     async def sendread_until_timeout(self, message: str) -> str:
         non_response_reply = self.BOARD_RESPONSE_PREFIX + ',NACK'
-        message_status = await self.sendread(message)
-        start = time.time()
-        while message_status == non_response_reply and \
-                time.time() - start < self.NON_RESPONSE_SECONDS:
-            asyncio.sleep(self.POLLING_INTERVAL_SECONDS)  # Ratelimiting
-            message_status = await self.sendread(message,
-                                                 self.BOARD_RESPONSE_PREFIX)
+        with self._lock:
+            message_status = await self.sendread_nolock(message)
+            start = time.time()
+            while message_status == non_response_reply and \
+                    time.time() - start < self.NON_RESPONSE_SECONDS:
+                asyncio.sleep(self.POLLING_INTERVAL_SECONDS)  # Ratelimiting
+                message_status = await self.sendread_nolock(
+                    message, self.BOARD_RESPONSE_PREFIX)
         if message_status == non_response_reply:
             raise NonResponseError(message, self.__class__.__name__)
         return message_status
@@ -442,9 +443,8 @@ class BillValidator(Peripheral):
             self._logger.warning("Told to stack bill, but none in escrow.")
             raise InvalidEscrowError()
         escrow_command = f"R,{self.create_address_byte('ESCROW')},01"
-        async with self._lock:
-            await self.sendread_nolock_until_timeout(escrow_command)
-            self._escrow_pending = False
+        await self.sendread_until_timeout(escrow_command)
+        self._escrow_pending = False
 
     @reset_wrapper
     async def return_escrow(self) -> None:
@@ -452,15 +452,13 @@ class BillValidator(Peripheral):
             self._logger.warning("Told to return bill, but none in escrow.")
             raise InvalidEscrowError()
         escrow_command = f"R,{self.create_address_byte('ESCROW')},00"
-        async with self._lock:
-            await self.sendread_nolock_until_timeout(escrow_command)
-            self._escrow_pending = False
+        await self.sendread_until_timeout(escrow_command)
+        self._escrow_pending = False
 
     @reset_wrapper
     async def enable(self) -> None:
         await super().enable()
-        async with self._lock:
-            await self.sendread_nolock_until_timeout(self.enable_command)
+        await self.sendread_until_timeout(self.enable_command)
 
     @reset_wrapper
     async def disable(self) -> None:
@@ -468,8 +466,7 @@ class BillValidator(Peripheral):
             await self.return_escrow()
         await super().disable()
         disable_command = f"R,{self.create_address_byte('BILL TYPE')},0000\n"
-        async with self._lock:
-            await self.sendread_nolock_until_timeout(disable_command)
+        await self.sendread_until_timeout(disable_command)
 
     @reset_wrapper
     async def status(self):
