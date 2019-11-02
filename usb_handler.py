@@ -85,7 +85,7 @@ class USBHandler:
         return fut
 
     async def sendread(self, message: AsciiBytes, prefix: str) -> str:
-        self.send(message, _drain=False)
+        await self.send(message, _drain=False)
         fut = self._read_internal(prefix)
         try:
             await self.serial_writer.drain()

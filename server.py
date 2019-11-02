@@ -8,6 +8,7 @@ from mdb.sniffer import Sniffer
 from usb_handler import USBHandler
 from websocket_client import WebsocketClient
 
+logging.basicConfig(level=logging.DEBUG, filename='server.log')
 logger = logging.getLogger()
 
 
@@ -55,5 +56,8 @@ if __name__ == "__main__":
                         default='/dev/ttyUSB0', type=str)
     parser.add_argument("--sniff", help="Enable the packet sniffer for "
                         "debugging.", action='store_true')
+    parser.add_argument("--debug", help="Run the server in debug mode.",
+                        action='store_true')
+    args = parser.parse_args()
     logger.debug('Launching event loop.')
-    asyncio.run(main(parser.parse_args()))
+    asyncio.run(main(args), debug=args.debug)

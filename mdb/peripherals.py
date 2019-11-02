@@ -62,7 +62,10 @@ class RequestMessage:
         return s + ',\n'
 
     def __str__(self):
-        return f"(address_byte: {self.address_byte}, payload: {self.payload})"
+	s = f"(address_byte: {self.address_byte.hex()}"
+        if self.payload:
+            s += f", payload: {self.payload.hex()}"
+        return s + ")"
 
 
 class ResponseMessage:
@@ -135,7 +138,7 @@ class Peripheral(ABC):
         self._initialized = False
         self._reset_task = None
         self._logger = logging.getLogger('.'.join((__name__,
-                                                  self._class__.__name__)))
+                                                  self.__class__.__name__)))
 
     async def initialize(self, master, send_reset=True) -> None:
         """Initialization code for the peripheral.
@@ -185,7 +188,7 @@ class Peripheral(ABC):
             start = time.time()
             while message_status.is_nack and \
                     time.time() - start < self.NON_RESPONSE_SECONDS:
-                asyncio.sleep(self.POLLING_INTERVAL_SECONDS)  # Ratelimiting
+                await asyncio.sleep(self.POLLING_INTERVAL_SECONDS)  # Ratelimiting
                 message_status = await self.sendread_nolock(
                     message, self.BOARD_RESPONSE_PREFIX)
         if message_status.is_nack:
@@ -198,7 +201,7 @@ class Peripheral(ABC):
         start = time.time()
         while message_status.is_nack and \
                 time.time() - start < self.NON_RESPONSE_SECONDS:
-            asyncio.sleep(self.POLLING_INTERVAL_SECONDS)  # Ratelimiting
+            await asyncio.sleep(self.POLLING_INTERVAL_SECONDS)  # Ratelimiting
             message_status = await self.sendread_nolock(message)
         if message_status.is_nack:
             raise NonResponseError(message, self.__class__.__name__)
@@ -208,7 +211,7 @@ class Peripheral(ABC):
             ResponseMessage:
         message_status = await self.sendread_until_timeout(message)
         while message_status.is_ack:
-            asyncio.sleep(self.POLLING_INTERVAL_SECONDS)  # Ratelimiting
+            await asyncio.sleep(self.POLLING_INTERVAL_SECONDS)  # Ratelimiting
             message_status = await self.sendread_until_timeout(message)
         return message_status
 
@@ -216,7 +219,7 @@ class Peripheral(ABC):
             self, message: RequestMessage) -> ResponseMessage:
         message_status = await self.sendread_nolock_until_timeout(message)
         while message_status.is_ack:
-            asyncio.sleep(self.POLLING_INTERVAL_SECONDS)  # Ratelimiting
+            await asyncio.sleep(self.POLLING_INTERVAL_SECONDS)  # Ratelimiting
             message_status = await self.sendread_nolock_until_timeout(message)
         return message_status
 
@@ -308,7 +311,7 @@ class BillValidator(Peripheral):
         self._escrow_pending = False
 
     async def _reset(self, send_reset, poll_reset) -> None:
-        super()._reset(send_reset, poll_reset)
+        await super()._reset(send_reset, poll_reset)
         async with self._lock:
             self._escrow_pending = False
             while True:
