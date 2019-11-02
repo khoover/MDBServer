@@ -330,7 +330,8 @@ class BillValidator(Peripheral):
                     self.security_level_bitvector = int(setup_data_bytes[8] +
                                                         setup_data_bytes[9],
                                                         base=16)
-                    self.has_escrow = setup_data_bytes[10].upper() == 'FF'
+                    self.has_escrow = \
+                        int(setup_data_bytes[10], base=16) == 0xff
                     self.bill_values = [int(x, base=16) for x in
                                         setup_data_bytes[11:]]
 
@@ -372,8 +373,12 @@ class BillValidator(Peripheral):
                                                      base=2)
                     self.enable_command = \
                         f"R,{self.create_address_byte('BILL TYPE')}," \
-                        f"{self.bill_enable_bitvector:x}" \
-                        f"{self.bill_enable_bitvector:x}\n"
+                        f"{self.bill_enable_bitvector:x}"
+                    if self.has_escrow:
+                        self.enable_command += \
+                            f"{self.bill_enable_bitvector:x}\n"
+                    else:
+                        self.enable_command += "00\n"
                     await self.sendread_nolock_until_timeout(
                         self.enable_command)
                     self._reset_task = None
@@ -401,6 +406,7 @@ class BillValidator(Peripheral):
                 activity_type = (response & 0x70) >> 4
                 bill_type = response & 0x0f
                 if activity_type == 0x01:
+                    # Bill in escrow
                     self._escrow_pending = True
                 elif activity_type == 0x00:
                     # Bill stacked
