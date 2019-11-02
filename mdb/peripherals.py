@@ -365,10 +365,6 @@ class BillValidator(Peripheral):
                                        for x in self.bill_values]
                     bills_to_enable.extend([0] * (16 - len(self.bill_values)))
                     bills_to_enable.reverse()
-                    # TODO: Figure out how this should be converted into a
-                    # bitvector. It's not clear if I need to reverse the list
-                    # before doing the shift-and-add, or if something else
-                    # weird happens.
                     self.bill_enable_bitvector = int(''.join(bills_to_enable),
                                                      base=2)
                     self.enable_command = \
@@ -405,6 +401,7 @@ class BillValidator(Peripheral):
                 # poll as a JUST RESET; could be confusing if we could.
                 activity_type = (response & 0x70) >> 4
                 bill_type = response & 0x0f
+                bill_value = self.bill_values(bill_type) * self.scaling_factor
                 if activity_type == 0x01:
                     # Bill in escrow
                     self._escrow_pending = True
