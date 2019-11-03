@@ -547,12 +547,13 @@ class BillValidator(Peripheral):
                 response = await self.sendread_until_data_or_nack(
                     poll_message)
                 response_statuses = list(response.data)
-                response_handler = asyncio.create_task(
-                    self.handle_poll_responses(response_statuses))
-                await asyncio.sleep(self.POLLING_INTERVAL_SECONDS)
-                # Make sure we've finished processing the last batch before
-                # polling for a new one.
-                await response_handler
+                # Ensures we've finished processing a poll response and that
+                # it's been sufficiently long since the last poll before
+                # continuing.
+                await asyncio.gather(
+                    asyncio.sleep(self.POLLING_INTERVAL_SECONDS),
+                    self.handle_poll_responses(response_statuses)
+                )
             except NonResponseError as e:
                 self._logger.warning('Bill validator timed out while polling, '
                                      'resetting.', exc_info=e)
