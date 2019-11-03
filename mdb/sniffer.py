@@ -13,7 +13,7 @@ class Sniffer:
         self.usb_handler = usb_handler
         status = await usb_handler.sendread(to_ascii('X,1\n'), 'x')
         if status != 'x,ACK':
-            raise RuntimeError(f"Unable to start MDB sniffer, got {status}")
+            self.logger.warning('Got something other than ACK: %s', status)
         self.initialized = True
         self.logger.debug("Sniffer initialized")
         self.message_queue = usb_handler.listen('x')
