@@ -56,7 +56,7 @@ class RequestMessage:
             s += f",{self.payload.hex()}"
         return s + '\n'
 
-    def __str__(self):
+    def __repr__(self):
         s = f"(address_byte: {self.address_byte.hex()}"
         if self.payload:
             s += f", payload: {self.payload.hex()}"
@@ -68,6 +68,16 @@ class ResponseMessage:
         self.is_ack = False
         self.is_nack = False
         self.data = None
+
+    def __repr__(self):
+        if self.is_ack:
+            return 'ACK'
+        elif self.is_nack:
+            return 'NACK'
+        elif self.data:
+            return self.data.hex()
+        else:
+            return ''
 
     @staticmethod
     def unpack(message: str):
