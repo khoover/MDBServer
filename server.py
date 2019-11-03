@@ -20,11 +20,11 @@ is_shutting_down = False
 async def shutdown(master, cashless_slave, sniffer, usb_handler,
                    websocket_client, signame):
     global is_shutting_down
-    logger.warning("Shutting down, got signal %s.", signame)
     if is_shutting_down and signame == 'SIGINT':
         exit('Shutting down immediately.')
     else:
         is_shutting_down = True
+    logger.info("Shutting down, got signal %s.", signame)
     await websocket_client.shutdown()
     await asyncio.gather(master.shutdown(), cashless_slave.shutdown())
     await sniffer.shutdown()
