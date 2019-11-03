@@ -341,8 +341,7 @@ class BillValidator(Peripheral):
                         response = \
                             await self.sendread_nolock_until_data_or_nack(
                                 RequestMessage(self.COMMANDS['POLL']))
-                        response_statuses = [response.data[i] for i in
-                                             range(len(response.data))]
+                        response_statuses = list(response.data)
                         # 0x06 is the code for JUST RESET.
                         if 0x06 not in response_statuses:
                             self._logger.warning("Did not get JUST RESET in "
@@ -373,8 +372,7 @@ class BillValidator(Peripheral):
                                            f'{country_code:x}.')
                     self.has_escrow = escrow_byte == 0xff
                     self._logger.debug('Has escrow: %s, escrow byte: %#02x', self.has_escrow, escrow_byte)
-                    self.bill_values = [setup_data.data[i] for i in
-                                        range(11, len(setup_data.data))]
+                    self.bill_values = list(setup_data.data[11:])
                     self._logger.debug('Bill values: %s', self.bill_values)
 
                     self._logger.info('Getting bill validator expansion '
@@ -537,8 +535,7 @@ class BillValidator(Peripheral):
             try:
                 response = await self.sendread_until_data_or_nack(
                     poll_message)
-                response_statuses = [response.data[i] for i in
-                                     range(len(response.data))]
+                response_statuses = list(response.data)
                 response_handler = asyncio.create_task(
                     self.handle_poll_responses(response_statuses))
                 await asyncio.sleep(self.POLLING_INTERVAL_SECONDS)
