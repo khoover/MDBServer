@@ -57,7 +57,7 @@ async def main(args):
         # communicate on the port.
         runners.append(asyncio.create_task(handler.run()))
         # Resets the MDB board
-        await handler.send(to_ascii('F,RESET'))
+        await handler.send(to_ascii('F,RESET\n'))
         if args.sniff:
             # Get the sniffer up and running before everything else
             # MDB-related, so it can report everything.
