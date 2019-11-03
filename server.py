@@ -58,6 +58,8 @@ async def main(args):
         runners.append(asyncio.create_task(handler.run()))
         # Resets the MDB board
         await handler.send(to_ascii('F,RESET\n'))
+        # Lets the USB handler clear any remaining messages off the read queue.
+        await asyncio.sleep(0)
         if args.sniff:
             # Get the sniffer up and running before everything else
             # MDB-related, so it can report everything.
