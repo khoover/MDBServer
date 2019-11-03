@@ -24,3 +24,4 @@ class Sniffer:
             message = await self.message_queue.get()
             message = message.split(',')[1:]
             self.logger.debug("Message sniffed: %r", message)
+            self.message_queue.task_done()
