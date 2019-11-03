@@ -190,7 +190,8 @@ class Peripheral(ABC):
             start = time.time()
             while message_status.is_nack and \
                     time.time() - start < self.NON_RESPONSE_SECONDS:
-                await asyncio.sleep(self.POLLING_INTERVAL_SECONDS)  # Ratelimiting
+                # Ratelimiting
+                await asyncio.sleep(self.POLLING_INTERVAL_SECONDS)
                 message_status = await self.sendread_nolock(message)
         if message_status.is_nack:
             raise NonResponseError(message, self.__class__.__name__)
@@ -371,7 +372,8 @@ class BillValidator(Peripheral):
                                            'stated country code is '
                                            f'{country_code:x}.')
                     self.has_escrow = escrow_byte == 0xff
-                    self._logger.debug('Has escrow: %s, escrow byte: %#02x', self.has_escrow, escrow_byte)
+                    self._logger.debug('Has escrow: %s, escrow byte: %#02x',
+                                       self.has_escrow, escrow_byte)
                     self.bill_values = list(setup_data.data[11:])
                     self._logger.debug('Bill values: %s', self.bill_values)
 
@@ -396,7 +398,8 @@ class BillValidator(Peripheral):
                     stacker_count = struct.unpack('>H', stacker_count.data)[0]
                     self.stacker_count = (~0x8000) & stacker_count
                     self.stacker_full = stacker_count >= 0x8000
-                    self._logger.debug('Stacker full: %s, stacker count: %d', self.stacker_full, self.stacker_count)
+                    self._logger.debug('Stacker full: %s, stacker count: %d',
+                                       self.stacker_full, self.stacker_count)
 
                     # Could have a MAX_VALUE constant with the maximum bill
                     # value (in cents) that ChezBob is willing to accept? I've
@@ -404,12 +407,14 @@ class BillValidator(Peripheral):
                     bills_to_enable = [int(x > 0 and
                                            x <= (2000 // self.scaling_factor))
                                        for x in self.bill_values]
-                    self._logger.debug('%s', bills_to_enable)
+                    self._logger.debug('Bills to enable: %s', bills_to_enable)
                     bills_to_enable.reverse()
                     self.bill_enable_bitvector = 0
                     for b in bills_to_enable:
-                        self.bill_enable_bitvector = (self.bill_enable_bitvector << 1) | (b & 1)
-                    self._logger.debug('%#02x', self.bill_enable_bitvector)
+                        self.bill_enable_bitvector = \
+                                (self.bill_enable_bitvector << 1) | (b & 1)
+                    self._logger.debug('Bill enable bitvector: %#02x',
+                                       self.bill_enable_bitvector)
                     enable_payload = struct.pack('>H',
                                                  self.bill_enable_bitvector)
                     if self.has_escrow:
@@ -438,7 +443,7 @@ class BillValidator(Peripheral):
         for response in (x for x in responses if x != 0x06):
             if response in self.POLL_CRITICAL_STATUSES:
                 self._logger.critical(self.POLL_CRITICAL_STATUSES[response])
-		await self.disable()
+                await self.disable()
             elif response in self.POLL_INFO_STATUSES:
                 self._logger.info(self.POLL_INFO_STATUSES[response])
                 if response == 0x09 and not self._reset_task and self._enabled:
@@ -452,7 +457,8 @@ class BillValidator(Peripheral):
                 activity_type = (response & 0x70) >> 4
                 bill_type = response & 0x0f
                 bill_value = self.bill_values[bill_type] * self.scaling_factor
-                self._logger.debug('Activity type: %#01x, value: %d cents.', activity_type, bill_value)
+                self._logger.debug('Activity type: %#01x, value: %d cents.',
+                                   activity_type, bill_value)
                 if activity_type == 0x01:
                     # Bill in escrow
                     self._escrow_pending = True
