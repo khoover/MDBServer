@@ -435,6 +435,7 @@ class BillValidator(Peripheral):
         for response in responses:
             if response in self.POLL_CRITICAL_STATUSES:
                 self._logger.critical(self.POLL_CRITICAL_STATUSES[response])
+		await self.disable()
             elif response in self.POLL_INFO_STATUSES:
                 self._logger.info(self.POLL_INFO_STATUSES[response])
                 if response == 0x09 and not self._reset_task and self._enabled:
