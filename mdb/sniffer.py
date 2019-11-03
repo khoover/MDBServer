@@ -1,5 +1,8 @@
 import asyncio
 import logging
+import struct
+import time
+from typing import Sequence
 from usb_handler import USBHandler, to_ascii
 
 
@@ -8,6 +11,7 @@ class Sniffer:
         self.initialized = False
         self.logger = logging.getLogger('.'.join((__name__,
                                                   self.__class__.__name__)))
+        self.logger.setLevel(logging.DEBUG)
         self.run_task = None
 
     async def initialize(self, usb_handler: USBHandler):
@@ -20,11 +24,30 @@ class Sniffer:
         self.logger.debug("Sniffer initialized")
         self.message_queue = usb_handler.listen('x')
 
+    def parse_message(self, message: Sequence[str]) -> str:
+        block_status = struct.unpack('>H', bytes.fromhex(message[0]))
+        address = struct.unpack('>H', bytes.fromhex(message[2]))
+        address_str = ""
+        if block_status & 0x80:
+            address_str = f"To slave: {address} -- "
+        error_str = ""
+        if block_status & (~0x81):
+            error_str = "Error: {(block_status & (~0x81)) >> 1} -- "
+        return f"(From master: {bool(block_status & 0x80)} -- " \
+               f"Bus reset: {bool(block_status & 0x01)} -- " \
+               f"{address_str}" \
+               f"{error_str}" \
+               f"Time: {time.ctime()} -- " \
+               f"Data: {message[4]})"
+
     async def _run(self):
         while True:
             message = await self.message_queue.get()
+            if message == 'x,ACK' or message == 'x,NACK':
+                continue
             message = message.split(',')[1:]
-            self.logger.debug("Message sniffed: %r", message)
+            self.logger.debug("Message sniffed: %s",
+                              self.parse_message(message))
             self.message_queue.task_done()
 
     async def run(self):
