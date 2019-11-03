@@ -25,10 +25,6 @@ async def shutdown(master, cashless_slave, sniffer, usb_handler,
         exit('Shutting down immediately.')
     else:
         is_shutting_down = True
-    await websocket_client.shutdown()
-    await asyncio.gather(master.shutdown(), cashless_slave.shutdown())
-    await sniffer.shutdown()
-    await usb_handler.shutdown()
 
 
 async def main(args):
@@ -70,12 +66,20 @@ async def main(args):
     except Exception as e:
         logger.critical("Unable to initialize the server, an error occurred.",
                         exc_info=e)
+    finally:
+        await sniffer.shutdown()
+        await handler.shutdown()
         return
     try:
         await asyncio.gather(*runners)
     except Exception as e:
         logger.critical("Encountered an unhandled exception while running the"
                         " server, exiting.", exc_info=e)
+    finally:
+        await websocket_client.shutdown()
+        await asyncio.gather(master.shutdown(), cashless_slave.shutdown())
+        await sniffer.shutdown()
+        await handler.shutdown()
 
 
 if __name__ == "__main__":
