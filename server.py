@@ -5,7 +5,7 @@ from mdb.cashless_slave import CashlessSlave
 from mdb.master import Master
 from mdb.peripherals import CoinAcceptor, BillValidator
 from mdb.sniffer import Sniffer
-from usb_handler import USBHandler
+from usb_handler import USBHandler, to_ascii
 from websocket_client import WebsocketClient
 
 logging.basicConfig(level=logging.DEBUG, filename='server.log')
@@ -27,6 +27,8 @@ async def main(args):
         # Have to get the USB Handler running now so all the MDB users can
         # communicate on the port.
         runners.append(asyncio.create_task(handler.run()))
+        # Resets the MDB board
+        await handler.send(to_ascii('F,RESET'))
         if args.sniff:
             # Get the sniffer up and running before everything else
             # MDB-related, so it can report everything.

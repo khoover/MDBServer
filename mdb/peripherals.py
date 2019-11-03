@@ -59,10 +59,10 @@ class RequestMessage:
         s = f"{self.BOARD_MESSAGE_PREFIX},{self.address_byte.hex()}"
         if self.payload:
             s += f",{self.payload.hex()}"
-        return s + ',\n'
+        return s + '\n'
 
     def __str__(self):
-	s = f"(address_byte: {self.address_byte.hex()}"
+        s = f"(address_byte: {self.address_byte.hex()}"
         if self.payload:
             s += f", payload: {self.payload.hex()}"
         return s + ")"
@@ -99,7 +99,7 @@ def reset_wrapper(func):
     @functools.wraps(func)
     async def wrapper(self: Peripheral, *args, **kwargs):
         if self._reset_task:
-            raise PeripheralResetError(self.__class__.__name)
+            raise PeripheralResetError(self.__class__.__name__)
         try:
             await func(self, *args, **kwargs)
         except NonResponseError as e:
@@ -119,6 +119,7 @@ class Peripheral(ABC):
     and COMMANDS."""
     _lock: asyncio.Lock
     _initialized: bool
+    _enabled: bool
     _reset_task: asyncio.Task
     _logger: logging.Logger
     BOARD_RESPONSE_PREFIX = 'p'
@@ -137,6 +138,7 @@ class Peripheral(ABC):
         self._lock = asyncio.Lock()
         self._initialized = False
         self._reset_task = None
+        self._enabled = False
         self._logger = logging.getLogger('.'.join((__name__,
                                                   self.__class__.__name__)))
 
@@ -183,14 +185,13 @@ class Peripheral(ABC):
     # handling the reset after the non-response timeout.
     async def sendread_until_timeout(self, message: RequestMessage) -> \
             ResponseMessage:
-        with self._lock:
+        async with self._lock:
             message_status = await self.sendread_nolock(message)
             start = time.time()
             while message_status.is_nack and \
                     time.time() - start < self.NON_RESPONSE_SECONDS:
                 await asyncio.sleep(self.POLLING_INTERVAL_SECONDS)  # Ratelimiting
-                message_status = await self.sendread_nolock(
-                    message, self.BOARD_RESPONSE_PREFIX)
+                message_status = await self.sendread_nolock(message)
         if message_status.is_nack:
             raise NonResponseError(message, self.__class__.__name__)
         return message_status
@@ -244,11 +245,13 @@ class Peripheral(ABC):
     async def enable(self) -> None:
         """Enables the peripheral for vending activities."""
         assert self._initialized
+        self._enabled = True
 
     @abstractmethod
     async def disable(self) -> None:
         """Disables the peripheral for vending activities."""
         assert self._initialized
+        self._enabled = False
 
     # TODO: Decide what exactly this is going to return.
     @abstractmethod
@@ -356,10 +359,11 @@ class BillValidator(Peripheral):
                                       'information.')
                     setup_data = await self.sendread_nolock_until_data_or_nack(
                         RequestMessage(self.COMMANDS['SETUP']))
+                    self._logger.debug("Got %r", setup_data.data)
                     self.feature_level, country_code, self.scaling_factor, \
                         self.stacker_capacity, self.security_level_bitvector, \
-                        escrow_byte = struct.unpack('>bhhhhb',
-                                                    setup_data.data)
+                        escrow_byte = struct.unpack_from('>BHHHHB',
+                                                         setup_data.data)
                     self._logger.debug('Bill validator level: %d',
                                        self.feature_level)
                     if country_code != 0x0001 and country_code != 0x1840:
@@ -367,8 +371,10 @@ class BillValidator(Peripheral):
                                            'stated country code is '
                                            f'{country_code:x}.')
                     self.has_escrow = escrow_byte == 0xff
-                    self.bill_values = [setup_data.payload[i] for i in
+                    self._logger.debug('Has escrow: %s, escrow byte: %#02x', self.has_escrow, escrow_byte)
+                    self.bill_values = [setup_data.data[i] for i in
                                         range(11, len(setup_data.data))]
+                    self._logger.debug('Bill values: %s', self.bill_values)
 
                     self._logger.info('Getting bill validator expansion '
                                       'information.')
@@ -379,8 +385,8 @@ class BillValidator(Peripheral):
                     else:
                         expansion_message.payload = b'\x02'
                     self.expansion_data = \
-                        await self.sendread_nolock_until_data_or_nack(
-                            expansion_message).data
+                        (await self.sendread_nolock_until_data_or_nack(
+                            expansion_message)).data
                     self._logger.info('Got expansion data for bill validator: '
                                       '%r', self.expansion_data)
 
@@ -388,9 +394,10 @@ class BillValidator(Peripheral):
                     stacker_count = \
                         await self.sendread_nolock_until_data_or_nack(
                             RequestMessage(self.COMMANDS['STACKER']))
-                    stacker_count = struct.unpack('>h', stacker_count.data)[0]
+                    stacker_count = struct.unpack('>H', stacker_count.data)[0]
                     self.stacker_count = (~0x8000) & stacker_count
                     self.stacker_full = stacker_count >= 0x8000
+                    self._logger.debug('Stacker full: %s, stacker count: %d', self.stacker_full, self.stacker_count)
 
                     # Could have a MAX_VALUE constant with the maximum bill
                     # value (in cents) that ChezBob is willing to accept? I've
@@ -398,16 +405,18 @@ class BillValidator(Peripheral):
                     bills_to_enable = [int(x > 0 and
                                            x <= (2000 // self.scaling_factor))
                                        for x in self.bill_values]
-                    bills_to_enable.extend([0] * (16 - len(self.bill_values)))
+                    self._logger.debug('%s', bills_to_enable)
                     bills_to_enable.reverse()
-                    self.bill_enable_bitvector = int(''.join(bills_to_enable),
-                                                     base=2)
-                    enable_payload = struct.pack('>h',
+                    self.bill_enable_bitvector = 0
+                    for b in bills_to_enable:
+                        self.bill_enable_bitvector = (self.bill_enable_bitvector << 1) | (b & 1)
+                    self._logger.debug('%#02x', self.bill_enable_bitvector)
+                    enable_payload = struct.pack('>H',
                                                  self.bill_enable_bitvector)
                     if self.has_escrow:
                         enable_payload *= 2
                     else:
-                        enable_payload += '\x00\x00'
+                        enable_payload += b'\x00\x00'
                     self.enable_message = RequestMessage(
                         self.COMMANDS['BILL TYPE'], payload=enable_payload)
                     self._reset_task = None
@@ -421,23 +430,29 @@ class BillValidator(Peripheral):
 
     async def handle_poll_responses(self, responses: Sequence[int]) -> None:
         reset_task = None
+        if 0x09 in responses and not self._reset_task and not self._enabled:
+            await self.disable()
         for response in responses:
             if response in self.POLL_CRITICAL_STATUSES:
                 self._logger.critical(self.POLL_CRITICAL_STATUSES[response])
             elif response in self.POLL_INFO_STATUSES:
                 self._logger.info(self.POLL_INFO_STATUSES[response])
+                if response == 0x09 and not self._reset_task and self._enabled:
+                    await self.enable()
             elif response in self.POLL_WARNING_STATUSES:
                 self._logger.warning(self.POLL_WARNING_STATUSES[response])
-            elif response & 0x80 == 0x80:
+            elif (0x06 not in responses) and (response & 0x80 == 0x80):
                 # This is a payment code, should do something about that.
                 # TODO: Need to check if I can get one of these from the same
                 # poll as a JUST RESET; could be confusing if we could.
                 activity_type = (response & 0x70) >> 4
                 bill_type = response & 0x0f
-                bill_value = self.bill_values(bill_type) * self.scaling_factor
+                bill_value = self.bill_values[bill_type] * self.scaling_factor
+                self._logger.debug('Activity type: %#01x, value: %d cents.', activity_type, bill_value)
                 if activity_type == 0x01:
                     # Bill in escrow
                     self._escrow_pending = True
+                    await self.stack_escrow()
                 elif activity_type == 0x00:
                     # Bill stacked
                     pass
@@ -514,6 +529,7 @@ class BillValidator(Peripheral):
 
     async def run(self) -> None:
         await super().run()
+        await self.enable()
         poll_message = RequestMessage(self.COMMANDS['POLL'])
         while True:
             try:
