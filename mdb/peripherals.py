@@ -185,9 +185,10 @@ class Peripheral(ABC):
             start = time.time()
             while message_status.is_nack and \
                     time.time() - start < self.NON_RESPONSE_SECONDS:
-                # Ratelimiting
-                await asyncio.sleep(self.POLLING_INTERVAL_SECONDS)
-                message_status = await self.sendread_nolock(message)
+                message_status = (await asyncio.gather(
+                    asyncio.sleep(self.POLLING_INTERVAL_SECONDS),
+                    self.sendread_nolock(message)
+                ))[1]
         if message_status.is_nack:
             raise NonResponseError(message, self.__class__.__name__)
         return message_status
@@ -198,8 +199,10 @@ class Peripheral(ABC):
         start = time.time()
         while message_status.is_nack and \
                 time.time() - start < self.NON_RESPONSE_SECONDS:
-            await asyncio.sleep(self.POLLING_INTERVAL_SECONDS)  # Ratelimiting
-            message_status = await self.sendread_nolock(message)
+            message_status = (await asyncio.gather(
+                asyncio.sleep(self.POLLING_INTERVAL_SECONDS),
+                self.sendread_nolock(message)
+            ))[1]
         if message_status.is_nack:
             raise NonResponseError(message, self.__class__.__name__)
         return message_status
@@ -208,16 +211,20 @@ class Peripheral(ABC):
             ResponseMessage:
         message_status = await self.sendread_until_timeout(message)
         while message_status.is_ack:
-            await asyncio.sleep(self.POLLING_INTERVAL_SECONDS)  # Ratelimiting
-            message_status = await self.sendread_until_timeout(message)
+            message_status = (await asyncio.gather(
+                asyncio.sleep(self.POLLING_INTERVAL_SECONDS),
+                self.sendread_until_timeout(message)
+            ))[1]
         return message_status
 
     async def sendread_nolock_until_data_or_nack(
             self, message: RequestMessage) -> ResponseMessage:
         message_status = await self.sendread_nolock_until_timeout(message)
         while message_status.is_ack:
-            await asyncio.sleep(self.POLLING_INTERVAL_SECONDS)  # Ratelimiting
-            message_status = await self.sendread_nolock_until_timeout(message)
+            message_status = (await asyncio.gather(
+                asyncio.sleep(self.POLLING_INTERVAL_SECONDS),
+                self.sendread_nolock_until_timeout(message)
+            ))[1]
         return message_status
 
     @abstractmethod
@@ -429,6 +436,7 @@ class BillValidator(Peripheral):
 
     async def handle_poll_responses(self, responses: Sequence[int]) -> None:
         reset_task = None
+
         if 0x06 in responses:
             # Unsolicited JUST RESET, do the rest of the reset process.
             self._enabled = False
@@ -445,6 +453,7 @@ class BillValidator(Peripheral):
             except PeripheralResetError as e:
                 # Peripheral reset while enabling, don't try re-enabling
                 self._logger.info('Reset while enabling.', exc_info=e)
+
         for response in (x for x in responses if x != 0x06):
             if response in self.POLL_CRITICAL_STATUSES:
                 self._logger.critical(self.POLL_CRITICAL_STATUSES[response])
@@ -457,19 +466,22 @@ class BillValidator(Peripheral):
                 self._logger.info(self.POLL_INFO_STATUSES[response])
             elif response in self.POLL_WARNING_STATUSES:
                 self._logger.warning(self.POLL_WARNING_STATUSES[response])
-            elif (not reset_task) and (response & 0x80 == 0x80):
-                # This is a payment code, should do something about that.
-                # TODO: Need to check if I can get one of these from the same
-                # poll as a JUST RESET; could be confusing if we could.
+            elif response & 0x80:
                 activity_type = (response & 0x70) >> 4
                 bill_type = response & 0x0f
                 bill_value = self.bill_values[bill_type] * self.scaling_factor
                 self._logger.info('Activity type: %#01x, value: %d cents.',
                                   activity_type, bill_value)
+
                 if activity_type == 0x01:
                     # Bill in escrow
                     self._escrow_pending = True
-                    await self._master.notify_escrow(bill_value)
+                    if reset_task:
+                        # If we're resetting, it's not clear if a bill is still
+                        # in there or not; just spit it back out.
+                        await self.return_escrow()
+                    else:
+                        await self._master.notify_escrow(bill_value)
                 elif activity_type == 0x00:
                     # Bill stacked
                     await self._master.notify_stack(bill_value)
@@ -496,6 +508,7 @@ class BillValidator(Peripheral):
             else:
                 self._logger.warning('Unknown poll response received: %#02d',
                                      response)
+
         if reset_task:
             await reset_task
 
