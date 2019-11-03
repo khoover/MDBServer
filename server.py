@@ -5,11 +5,30 @@ from mdb.cashless_slave import CashlessSlave
 from mdb.master import Master
 from mdb.peripherals import CoinAcceptor, BillValidator
 from mdb.sniffer import Sniffer
+import signal
+from sys import exit
 from usb_handler import USBHandler, to_ascii
 from websocket_client import WebsocketClient
 
 logging.basicConfig(level=logging.DEBUG, filename='server.log')
 logger = logging.getLogger()
+
+
+is_shutting_down = False
+
+
+async def shutdown(master, cashless_slave, sniffer, usb_handler,
+                   websocket_client, signame):
+    global is_shutting_down
+    logger.warning("Shutting down, got signal %s.", signame)
+    if is_shutting_down and signame == 'SIGINT':
+        exit('Shutting down immediately.')
+    else:
+        is_shutting_down = True
+    await websocket_client.shutdown()
+    await asyncio.gather(master.shutdown(), cashless_slave.shutdown())
+    await sniffer.shutdown()
+    await usb_handler.shutdown()
 
 
 async def main(args):
@@ -18,7 +37,17 @@ async def main(args):
     bill_validator = BillValidator()
     coin_acceptor = CoinAcceptor()
     cashless_slave = CashlessSlave()
+    sniffer = Sniffer()
     websocket_client = WebsocketClient()
+    loop = asyncio.get_running_loop()
+    for signame in ('SIGINT', 'SIGTERM', 'SIGHUP'):
+        loop.add_signal_handler(
+            getattr(signal, signame),
+            lambda: asyncio.create_task(shutdown(
+                master, cashless_slave, sniffer, handler, websocket_client,
+                signame=signame
+            ))
+        )
     runners = [master.run(), cashless_slave.run(), websocket_client.run()]
     try:
         # Order of initialization matters here; USB Handler has to be first, in
@@ -32,7 +61,6 @@ async def main(args):
         if args.sniff:
             # Get the sniffer up and running before everything else
             # MDB-related, so it can report everything.
-            sniffer = Sniffer()
             await sniffer.initialize(handler)
             runners.append(asyncio.create_task(sniffer.run()))
         await asyncio.gather(master.initialize(handler, bill_validator,

@@ -37,11 +37,6 @@ class PeripheralResetError(PeripheralError):
         self.peripheral = peripheral
 
 
-class InvalidEscrowError(PeripheralError):
-    """Raised when an escrow method is called, but no bill is in escrow."""
-    pass
-
-
 class RequestMessage:
     BOARD_MESSAGE_PREFIX = 'R'
 
@@ -310,6 +305,8 @@ class BillValidator(Peripheral):
         0x0c: "Possible credited bill removal - someone tried to remove a "
               "credited bill."
     }
+    # Largest bill denomination the validator should accept, in cents.
+    MAX_VALUE_CENTS = 2000  # $20
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -401,11 +398,9 @@ class BillValidator(Peripheral):
                     self._logger.debug('Stacker full: %s, stacker count: %d',
                                        self.stacker_full, self.stacker_count)
 
-                    # Could have a MAX_VALUE constant with the maximum bill
-                    # value (in cents) that ChezBob is willing to accept? I've
-                    # picked $20 as just being a reasonable number.
                     bills_to_enable = [int(x > 0 and
-                                           x <= (2000 // self.scaling_factor))
+                                           x <= (self.MAX_VALUE_CENTS //
+                                                 self.scaling_factor))
                                        for x in self.bill_values]
                     self._logger.debug('Bills to enable: %s', bills_to_enable)
                     bills_to_enable.reverse()
@@ -435,19 +430,31 @@ class BillValidator(Peripheral):
     async def handle_poll_responses(self, responses: Sequence[int]) -> None:
         reset_task = None
         if 0x06 in responses:
-            # Unsolicited JUST RESET
+            # Unsolicited JUST RESET, do the rest of the reset process.
             self._enabled = False
             reset_task = asyncio.create_task(self.reset(False, False))
-        elif 0x09 in responses and not self._reset_task and not self._enabled:
-            await self.disable()
+        elif 0x09 not in responses and not self._enabled:
+            try:
+                await self.disable()
+            except PeripheralResetError:
+                # It'll be disabled after the reset anyway.
+                pass
+        elif 0x09 in responses and self._enabled:
+            try:
+                await self.enable()
+            except PeripheralResetError as e:
+                # Peripheral reset while enabling, don't try re-enabling
+                self._logger.info('Reset while enabling.', exc_info=e)
         for response in (x for x in responses if x != 0x06):
             if response in self.POLL_CRITICAL_STATUSES:
                 self._logger.critical(self.POLL_CRITICAL_STATUSES[response])
-                await self.disable()
+                try:
+                    await self.disable()
+                except PeripheralResetError:
+                    # Same logic as above.
+                    pass
             elif response in self.POLL_INFO_STATUSES:
                 self._logger.info(self.POLL_INFO_STATUSES[response])
-                if response == 0x09 and not self._reset_task and self._enabled:
-                    await self.enable()
             elif response in self.POLL_WARNING_STATUSES:
                 self._logger.warning(self.POLL_WARNING_STATUSES[response])
             elif (not reset_task) and (response & 0x80 == 0x80):
@@ -457,21 +464,22 @@ class BillValidator(Peripheral):
                 activity_type = (response & 0x70) >> 4
                 bill_type = response & 0x0f
                 bill_value = self.bill_values[bill_type] * self.scaling_factor
-                self._logger.debug('Activity type: %#01x, value: %d cents.',
-                                   activity_type, bill_value)
+                self._logger.info('Activity type: %#01x, value: %d cents.',
+                                  activity_type, bill_value)
                 if activity_type == 0x01:
                     # Bill in escrow
                     self._escrow_pending = True
-                    await self.return_escrow()
+                    await self._master.notify_escrow(bill_value)
                 elif activity_type == 0x00:
                     # Bill stacked
-                    pass
+                    await self._master.notify_stack(bill_value)
                 elif activity_type == 0x02:
                     # Bill returned
-                    pass
+                    await self._master.notify_return(bill_value)
                 elif activity_type == 0x04:
                     # Disabled bill rejected
-                    pass
+                    self._logger.info('Rejected a disabled bill type: %#01x',
+                                      bill_type)
                 else:
                     self._logger.warning('Got an unknown stacker command: '
                                          '%#01d', activity_type)
@@ -491,14 +499,11 @@ class BillValidator(Peripheral):
         if reset_task:
             await reset_task
 
-    # TODO: Decide how this bit is going to work. Could add stack_pending and
-    # return_pending variables? At that point, though, why not just have a full
-    # state machine going on?
     @reset_wrapper
     async def stack_escrow(self) -> None:
         if not self._escrow_pending:
             self._logger.warning("Told to stack bill, but none in escrow.")
-            raise InvalidEscrowError()
+            return
         escrow_message = RequestMessage(self.COMMANDS['ESCROW'],
                                         payload=b'\x01')
         await self.sendread_until_timeout(escrow_message)
@@ -508,7 +513,7 @@ class BillValidator(Peripheral):
     async def return_escrow(self) -> None:
         if not self._escrow_pending:
             self._logger.warning("Told to return bill, but none in escrow.")
-            raise InvalidEscrowError()
+            return
         escrow_message = RequestMessage(self.COMMANDS['ESCROW'],
                                         payload=b'\x00')
         await self.sendread_until_timeout(escrow_message)
@@ -576,4 +581,4 @@ class CoinAcceptor(Peripheral):
 
 
 __all__ = (Peripheral, NonResponseError, PeripheralResetError, PeripheralError,
-           InvalidEscrowError, BillValidator, CoinAcceptor, SETUP_TIME_SECONDS)
+           BillValidator, CoinAcceptor, SETUP_TIME_SECONDS)

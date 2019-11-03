@@ -42,8 +42,7 @@ class USBHandler:
         self.initialized = True
         self.logger.debug("Connected to serial device at %s.", device_path)
 
-    async def run(self) -> None:
-        assert self.initialized
+    async def _run(self) -> None:
         while True:
             message = await self.serial_reader.readuntil(separator=b'\r\n')
             stripped_message = message.decode(encoding='ascii').rstrip('\n\r')
@@ -65,6 +64,14 @@ class USBHandler:
                         self.queues[message_type].put(stripped_message))
             else:
                 self.logger.error("Unhandled message: %s", stripped_message)
+
+    async def run(self) -> None:
+        assert self.initialized
+        self.run_task = asyncio.create_task(self._run())
+        try:
+            await self.run_task
+        except asyncio.CancelledError:
+            pass
 
     async def send(self, message: AsciiBytes, _drain=True) -> None:
         assert self.initialized
@@ -130,6 +137,19 @@ class USBHandler:
         assert len(prefix) == 1
         del self.queues[prefix]
         self.logger.info("No longer polling for message type: %s", prefix)
+
+    async def shutdown(self):
+        if not self.initialized:
+            return
+        self.logger.info("Shutting down.")
+        if self.run_task:
+            self.run_task.cancel()
+        for fut in self.waiters.values():
+            fut.cancel()
+        self.serial_writer.close()
+        await self.serial_writer.wait_closed()
+        self.logger.info("Shutdown complete.")
+        self.initialized = False
 
 
 __all__ = (USBHandler, to_ascii)

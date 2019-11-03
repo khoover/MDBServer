@@ -9,3 +9,6 @@ class WebsocketClient:
 
     async def run(self):
         pass
+
+    async def shutdown(self):
+        pass
