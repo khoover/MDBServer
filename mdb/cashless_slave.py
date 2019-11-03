@@ -49,7 +49,23 @@ class CashlessSlave:
             message = await self._queue.get()
             self._logger.info('Got message: %s', message)
             if message == 'c,STATUS,ENABLED':
+                self._logger.debug('VMC ready for session, starting.')
                 await self._usb_handler.send(to_ascii('C,START,1.00\n'))
+            elif message == 'c,VEND,SUCCESS':
+                # Vend was successful, tell the websocket?
+                self._logger.info('Vend successful.')
+            elif message.startswith('c,STATUS,VEND'):
+                # Got a request to vend, tell the websocket.
+                product_id, amount = message.split(',')[3:5]
+                self._logger.info('Got vend request for product %s.',
+                                  product_id)
+                # Just tell it to reject for now.
+                await self._usb_handler.send(to_ascii('C,VEND,0\n'))
+            elif message.startswith('c,ERR'):
+                # This needs some work, need to decide what happens.
+                self._logger.warning('Got an error message: %s', message)
+            else:
+                self._logger.info('Got an unhandled message: %s', message)
             self._queue.task_done()
 
     async def run(self):
