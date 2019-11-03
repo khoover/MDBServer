@@ -25,6 +25,10 @@ async def shutdown(master, cashless_slave, sniffer, usb_handler,
         exit('Shutting down immediately.')
     else:
         is_shutting_down = True
+    await websocket_client.shutdown()
+    await asyncio.gather(master.shutdown(), cashless_slave.shutdown())
+    await sniffer.shutdown()
+    await usb_handler.shutdown()
 
 
 async def main(args):
