@@ -67,6 +67,7 @@ async def main(args):
         logger.critical("Unable to initialize the server, an error occurred.",
                         exc_info=e)
     finally:
+        logger.info("Shutting down sniffer and handler.")
         await sniffer.shutdown()
         await handler.shutdown()
         return
