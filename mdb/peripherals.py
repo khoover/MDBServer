@@ -236,6 +236,7 @@ class Peripheral(ABC):
         send_reset is."""
         # assert self._initialized and (send_reset implies poll_reset)
         assert self._initialized and ((not send_reset) or poll_reset)
+        self._enabled = False
         if not self._reset_task:
             self._reset_task = asyncio.create_task(self._reset(send_reset,
                                                                poll_reset))
@@ -430,9 +431,13 @@ class BillValidator(Peripheral):
 
     async def handle_poll_responses(self, responses: Sequence[int]) -> None:
         reset_task = None
-        if 0x09 in responses and not self._reset_task and not self._enabled:
+        if 0x06 in responses:
+            # Unsolicited JUST RESET
+            self._enabled = False
+            reset_task = asyncio.create_task(self.reset(False, False))
+        elif 0x09 in responses and not self._reset_task and not self._enabled:
             await self.disable()
-        for response in responses:
+        for response in (x for x in responses if x != 0x06):
             if response in self.POLL_CRITICAL_STATUSES:
                 self._logger.critical(self.POLL_CRITICAL_STATUSES[response])
 		await self.disable()
@@ -442,7 +447,7 @@ class BillValidator(Peripheral):
                     await self.enable()
             elif response in self.POLL_WARNING_STATUSES:
                 self._logger.warning(self.POLL_WARNING_STATUSES[response])
-            elif (0x06 not in responses) and (response & 0x80 == 0x80):
+            elif (not reset_task) and (response & 0x80 == 0x80):
                 # This is a payment code, should do something about that.
                 # TODO: Need to check if I can get one of these from the same
                 # poll as a JUST RESET; could be confusing if we could.
@@ -453,7 +458,7 @@ class BillValidator(Peripheral):
                 if activity_type == 0x01:
                     # Bill in escrow
                     self._escrow_pending = True
-                    await self.stack_escrow()
+                    await self.return_escrow()
                 elif activity_type == 0x00:
                     # Bill stacked
                     pass
@@ -466,10 +471,6 @@ class BillValidator(Peripheral):
                 else:
                     self._logger.warning('Got an unknown stacker command: '
                                          '%#01d', activity_type)
-            elif response == 0x06:
-                # Unsolicited JUST RESET
-                if not reset_task:
-                    reset_task = asyncio.create_task(self.reset(False, False))
             elif response & 0x40 == 0x40:
                 # Attempted bill insertion while disabled
                 count = response & (0x20 - 1)
