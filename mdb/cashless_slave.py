@@ -2,6 +2,8 @@ import asyncio
 import logging
 from usb_handler import USBHandler, to_ascii
 
+# On vend success, board sends 'c,VEND,SUCCESS'
+# On vend fail, board sends 'c,ERR,...'
 
 class CashlessSlave:
     _initialized: bool
