@@ -50,21 +50,27 @@ async def main(args):
         )
     runners = [master.run(), cashless_slave.run(), websocket_client.run()]
     try:
+        logger.info('Initializing USB handler.')
         # Order of initialization matters here; USB Handler has to be first, in
         # case the users try sending strings in their initialization.
         await handler.initialize(args.device_path)
         # Have to get the USB Handler running now so all the MDB users can
         # communicate on the port.
+        logger.info('Starting USB handler in new Task.')
         runners.append(asyncio.create_task(handler.run()))
         # Resets the MDB board
+        logger.info('Resetting MDB board.')
         await handler.send(to_ascii('F,RESET\n'))
         # Lets the USB handler clear any remaining messages off the read queue.
         await asyncio.sleep(0)
         if args.sniff:
             # Get the sniffer up and running before everything else
             # MDB-related, so it can report everything.
+            logger.info('Initializing MDB sniffer.')
             await sniffer.initialize(handler)
+            logger.info('Starting MDB sniffer.')
             runners.append(asyncio.create_task(sniffer.run()))
+        logger.info('Initializing the MDB objects and the websocket client.')
         await asyncio.gather(master.initialize(handler, bill_validator,
                                                coin_acceptor),
                              cashless_slave.initialize(handler),
@@ -78,6 +84,7 @@ async def main(args):
         await handler.shutdown()
         return
     try:
+        logger.info('Starting the MDB objects and the websocket client.')
         await asyncio.gather(*runners)
     except Exception as e:
         logger.critical("Encountered an unhandled exception while running the"
