@@ -239,7 +239,7 @@ class Peripheral(ABC):
 
     @abstractmethod
     async def _reset(self, send_reset, poll_reset) -> None:
-        pass
+        self._logger.info('Starting reset.')
 
     async def reset(self, send_reset=True, poll_reset=True) -> None:
         """Resets the peripheral.
@@ -253,18 +253,21 @@ class Peripheral(ABC):
         if not self._reset_task:
             self._reset_task = asyncio.create_task(self._reset(send_reset,
                                                                poll_reset))
+            self._logger.info('Created reset task.')
         await self._reset_task
 
     @abstractmethod
     async def enable(self) -> None:
         """Enables the peripheral for vending activities."""
         assert self._initialized
+        self._logger.info('Enabling.')
         self._enabled = True
 
     @abstractmethod
     async def disable(self) -> None:
         """Disables the peripheral for vending activities."""
         assert self._initialized
+        self._logger.info('Disabling.')
         self._enabled = False
 
     # TODO: Decide what exactly this is going to return.
@@ -278,6 +281,7 @@ class Peripheral(ABC):
         """Does whatever persistent action is needed."""
         assert self._initialized
         await self._init_task
+        self._logger.info('Running polling loop.')
 
 
 class BillValidator(Peripheral):
@@ -332,13 +336,13 @@ class BillValidator(Peripheral):
     async def _reset(self, send_reset, poll_reset) -> None:
         await super()._reset(send_reset, poll_reset)
         async with self._lock:
+            self._logger.info('Reset has lock now.')
             self._escrow_pending = False
             while True:
                 try:
                     if send_reset:
                         message = RequestMessage(self.COMMANDS['RESET'])
-                        self._logger.info('Sending reset command to bill '
-                                          'validator.')
+                        self._logger.info('Sending reset command.')
                         response = await self.sendread_nolock(message)
                         if response.is_ack:
                             await asyncio.sleep(SETUP_TIME_SECONDS)
@@ -351,8 +355,7 @@ class BillValidator(Peripheral):
                             continue
                     # Poll until JUST RESET
                     if poll_reset:
-                        self._logger.info('Polling bill validator for JUST '
-                                          'RESET.')
+                        self._logger.info('Polling for JUST RESET.')
                         response = \
                             await self.sendread_nolock_until_data_or_nack(
                                 RequestMessage(self.COMMANDS['POLL']))
@@ -370,20 +373,19 @@ class BillValidator(Peripheral):
                         asyncio.create_task(self.handle_poll_responses(
                             [x for x in response_statuses if x != 0x06]))
 
-                    self._logger.info('Getting bill validator setup '
-                                      'information.')
+                    self._logger.info('Getting setup information.')
                     setup_data = await self.sendread_nolock_until_data_or_nack(
                         RequestMessage(self.COMMANDS['SETUP']))
-                    self._logger.debug("Got %r", setup_data.data)
+                    self._logger.debug("Got setup information: %r",
+                                       setup_data.data)
                     self.feature_level, country_code, self.scaling_factor, \
                         self.stacker_capacity, self.security_level_bitvector, \
                         escrow_byte = struct.unpack_from('>BHHHHB',
                                                          setup_data.data)
-                    self._logger.debug('Bill validator level: %d',
-                                       self.feature_level)
+                    self._logger.debug('Feature level: %d', self.feature_level)
                     if country_code != 0x0001 and country_code != 0x1840:
-                        raise RuntimeError('Bill validator does not use USD, '
-                                           'stated country code is '
+                        raise RuntimeError('Country code is not USD, stated '
+                                           'country code is '
                                            f'{country_code:x}.')
                     self.has_escrow = escrow_byte == 0xff
                     self._logger.debug('Has escrow: %s, escrow byte: %#02x',
@@ -391,8 +393,7 @@ class BillValidator(Peripheral):
                     self.bill_values = list(setup_data.data[11:])
                     self._logger.debug('Bill values: %s', self.bill_values)
 
-                    self._logger.info('Getting bill validator expansion '
-                                      'information.')
+                    self._logger.info('Getting expansion information.')
                     expansion_message = RequestMessage(
                         self.COMMANDS['EXPANSION COMMAND'])
                     if self.feature_level == 1:
@@ -402,8 +403,8 @@ class BillValidator(Peripheral):
                     self.expansion_data = \
                         (await self.sendread_nolock_until_data_or_nack(
                             expansion_message)).data
-                    self._logger.info('Got expansion data for bill validator: '
-                                      '%r', self.expansion_data)
+                    self._logger.info('Got expansion data: %r',
+                                      self.expansion_data)
 
                     self._logger.info('Getting stacked bill count.')
                     stacker_count = \
@@ -438,14 +439,14 @@ class BillValidator(Peripheral):
                     self._reset_task = None
                     return
                 except NonResponseError as e:
-                    self._logger.warning("Bill validator timed out while "
-                                         "resetting, message was %s.",
-                                         e.message, exc_info=e)
+                    self._logger.warning("Timed out while resetting, message "
+                                         "was %s.", e.message, exc_info=e)
                     send_reset = True
                     poll_reset = True
 
     async def handle_poll_responses(self, responses: Sequence[int]) -> None:
         reset_task = None
+        self._logger.debug('Handling poll responses: %s', responses)
 
         if 0x06 in responses:
             # Unsolicited JUST RESET, do the rest of the reset process.
@@ -527,6 +528,7 @@ class BillValidator(Peripheral):
         if not self._escrow_pending:
             self._logger.warning("Told to stack bill, but none in escrow.")
             return
+        self._logger.info('Stacking bill.')
         escrow_message = RequestMessage(self.COMMANDS['ESCROW'],
                                         payload=b'\x01')
         await self.sendread_until_timeout(escrow_message)
@@ -537,6 +539,7 @@ class BillValidator(Peripheral):
         if not self._escrow_pending:
             self._logger.warning("Told to return bill, but none in escrow.")
             return
+        self._logger.info('Returning bill.')
         escrow_message = RequestMessage(self.COMMANDS['ESCROW'],
                                         payload=b'\x00')
         await self.sendread_until_timeout(escrow_message)
@@ -563,6 +566,7 @@ class BillValidator(Peripheral):
 
     async def run(self) -> None:
         await super().run()
+        # TODO: Remove before this goes live.
         await self.enable()
         poll_message = RequestMessage(self.COMMANDS['POLL'])
         while True:
@@ -578,8 +582,8 @@ class BillValidator(Peripheral):
                     self.handle_poll_responses(response_statuses)
                 )
             except NonResponseError as e:
-                self._logger.warning('Bill validator timed out while polling, '
-                                     'resetting.', exc_info=e)
+                self._logger.warning('Timed out while polling, resetting.',
+                                     exc_info=e)
                 await self.reset(True, True)
 
 
