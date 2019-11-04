@@ -33,11 +33,11 @@ class Sniffer:
         error_str = ""
         if block_status & (~0x81):
             error_str = "Error: {(block_status & (~0x81)) >> 1} -- "
-        return f"(From master: {bool(block_status & 0x80)} -- " \
-               f"Bus reset: {bool(block_status & 0x01)} -- " \
+        return f"(Time: {time.ctime()} -- " \
+               f"From master: {bool(block_status & 0x80)} -- " \
                f"{address_str}" \
+               f"Bus reset: {bool(block_status & 0x01)} -- " \
                f"{error_str}" \
-               f"Time: {time.ctime()} -- " \
                f"Data: {message[4]})"
 
     async def _run(self):
