@@ -38,6 +38,7 @@ class PeripheralResetError(PeripheralError):
 
 
 class RequestMessage:
+    __slots__ = ['address_byte', 'payload']
     BOARD_MESSAGE_PREFIX = 'R'
 
     def __init__(self, address_byte: bytes, payload=None):
@@ -64,6 +65,8 @@ class RequestMessage:
 
 
 class ResponseMessage:
+    __slots__ = ['is_ack', 'is_nack', 'data']
+
     def __init__(self):
         self.is_ack = False
         self.is_nack = False
