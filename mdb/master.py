@@ -88,7 +88,7 @@ class Master:
         try:
             await self._run_task
         except asyncio.CancelledError:
-            pass
+            self._logger.info('Runner cancelled.')
 
     async def shutdown(self):
         if not self._run_task:

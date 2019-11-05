@@ -281,6 +281,8 @@ class Peripheral(ABC):
         """Does whatever persistent action is needed."""
         assert self._initialized
         await self._init_task
+        # TODO: Remove before this goes live.
+        await self.enable()
         self._logger.info('Running polling loop.')
 
 
@@ -449,6 +451,7 @@ class BillValidator(Peripheral):
         self._logger.debug('Handling poll responses: %s', responses)
 
         if 0x06 in responses:
+            self._logger.warning('Got unsolicited JUST RESET.')
             # Unsolicited JUST RESET, do the rest of the reset process.
             self._enabled = False
             reset_task = asyncio.create_task(self.reset(False, False))
@@ -566,8 +569,6 @@ class BillValidator(Peripheral):
 
     async def run(self) -> None:
         await super().run()
-        # TODO: Remove before this goes live.
-        await self.enable()
         poll_message = RequestMessage(self.COMMANDS['POLL'])
         while True:
             try:
