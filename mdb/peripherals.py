@@ -60,7 +60,7 @@ class RequestMessage:
     def __repr__(self):
         s = f"RequestMessage(address_byte = {self.address_byte.hex()}"
         if self.payload:
-            s += f", payload: {self.payload.hex()}"
+            s += f", payload = {self.payload.hex()}"
         return s + ")"
 
 
