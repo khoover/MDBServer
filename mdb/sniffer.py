@@ -25,22 +25,27 @@ class Sniffer:
         self.message_queue = usb_handler.listen('x')
 
     def parse_message(self, message: Sequence[str]) -> str:
-        # Temporary, until we figure out what this is supposed to be exactly.
-        return str(message)
-#        block_status = struct.unpack('>H', bytes.fromhex(message[0]))
-#        address = struct.unpack('>H', bytes.fromhex(message[2]))
-#        address_str = ""
-#        if block_status & 0x80:
-#            address_str = f"To slave: {address} -- "
-#        error_str = ""
-#        if block_status & (~0x81):
-#            error_str = "Error: {(block_status & (~0x81)) >> 1} -- "
-#        return f"(Time: {time.ctime()} -- " \
-#               f"From master: {bool(block_status & 0x80)} -- " \
-#               f"{address_str}" \
-#               f"Bus reset: {bool(block_status & 0x01)} -- " \
-#               f"{error_str}" \
-#               f"Data: {message[4]})"
+        # Temporary, until we figure out what message is supposed to be
+        # exactly.
+        try:
+            block_status = struct.unpack('>H', bytes.fromhex(message[0]))
+            address = struct.unpack('>H', bytes.fromhex(message[2]))
+            address_str = ""
+            if block_status & 0x80:
+                address_str = f"To slave: {address} -- "
+            error_str = ""
+            if block_status & (~0x81):
+                error_str = "Error: {(block_status & (~0x81)) >> 1} -- "
+            return f"(Time: {time.ctime()} -- " \
+                   f"From master: {bool(block_status & 0x80)} -- " \
+                   f"{address_str}" \
+                   f"Bus reset: {bool(block_status & 0x01)} -- " \
+                   f"{error_str}" \
+                   f"Data: {message[4]})"
+        except Exception as e:
+            self.logger.error('Got error while parsing message: %s', message,
+                              exc_info=e)
+            return str(message)
 
     async def _run(self):
         while True:
