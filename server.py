@@ -78,9 +78,9 @@ async def main(args):
     except Exception as e:
         logger.critical("Unable to initialize the server, an error occurred.",
                         exc_info=e)
-    finally:
-        logger.info("Shutting down sniffer and handler.")
-        await sniffer.shutdown()
+        logger.info("Shutting down websocket client, MDB sniffer, and USB "
+                    "handler.")
+        await asyncio.gather(sniffer.shutdown(), websocket_client.shutdown())
         await handler.shutdown()
         return
     try:

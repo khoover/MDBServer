@@ -38,6 +38,7 @@ class PeripheralResetError(PeripheralError):
 
 
 class RequestMessage:
+    __slots__ = ['address_byte', 'payload']
     BOARD_MESSAGE_PREFIX = 'R'
 
     def __init__(self, address_byte: bytes, payload=None):
@@ -57,27 +58,29 @@ class RequestMessage:
         return s + '\n'
 
     def __repr__(self):
-        s = f"(address_byte: {self.address_byte.hex()}"
+        s = f"RequestMessage(address_byte = {self.address_byte.hex()}"
         if self.payload:
-            s += f", payload: {self.payload.hex()}"
+            s += f", payload = {self.payload.hex()}"
         return s + ")"
 
 
 class ResponseMessage:
+    __slots__ = ['is_ack', 'is_nack', 'data']
+
     def __init__(self):
         self.is_ack = False
         self.is_nack = False
         self.data = None
 
     def __repr__(self):
+        s = ''
         if self.is_ack:
-            return 'ACK'
+            s = 'ACK'
         elif self.is_nack:
-            return 'NACK'
+            s = 'NACK'
         elif self.data:
-            return self.data.hex()
-        else:
-            return ''
+            s = self.data.hex()
+        return f"ResponseMessage({s})"
 
     @staticmethod
     def unpack(message: str):
@@ -281,6 +284,8 @@ class Peripheral(ABC):
         """Does whatever persistent action is needed."""
         assert self._initialized
         await self._init_task
+        # TODO: Remove before this goes live.
+        await self.enable()
         self._logger.info('Running polling loop.')
 
 
@@ -449,6 +454,7 @@ class BillValidator(Peripheral):
         self._logger.debug('Handling poll responses: %s', responses)
 
         if 0x06 in responses:
+            self._logger.warning('Got unsolicited JUST RESET.')
             # Unsolicited JUST RESET, do the rest of the reset process.
             self._enabled = False
             reset_task = asyncio.create_task(self.reset(False, False))
@@ -566,8 +572,6 @@ class BillValidator(Peripheral):
 
     async def run(self) -> None:
         await super().run()
-        # TODO: Remove before this goes live.
-        await self.enable()
         poll_message = RequestMessage(self.COMMANDS['POLL'])
         while True:
             try:

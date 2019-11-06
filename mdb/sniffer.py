@@ -63,7 +63,7 @@ class Sniffer:
         try:
             await self.run_task
         except asyncio.CancelledError:
-            pass
+            self.logger.info('Runner cancelled.')
 
     async def shutdown(self):
         if not self.run_task:

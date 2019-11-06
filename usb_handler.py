@@ -46,7 +46,7 @@ class USBHandler:
         while True:
             message = await self.serial_reader.readuntil(separator=b'\r\n')
             stripped_message = message.decode(encoding='ascii').rstrip('\n\r')
-            self.logger.info("Read '%s' from MDB board.", stripped_message)
+            self.logger.debug("Read '%s' from MDB board.", stripped_message)
             message_type = stripped_message[0]
             if message_type in self.waiters:
                 self.waiters[message_type].set_result(stripped_message)
@@ -67,11 +67,12 @@ class USBHandler:
 
     async def run(self) -> None:
         assert self.initialized
+        self.logger.info('Starting runner.')
         self.run_task = asyncio.create_task(self._run())
         try:
             await self.run_task
         except asyncio.CancelledError:
-            pass
+            self.logger.info('Runner cancelled.')
 
     async def send(self, message: AsciiBytes, _drain=True) -> None:
         assert self.initialized
@@ -94,11 +95,10 @@ class USBHandler:
     async def sendread(self, message: AsciiBytes, prefix: str) -> str:
         await self.send(message, _drain=False)
         fut = self._read_internal(prefix)
+        self.logger.info("Waiting for a single message of type: %s", prefix)
         try:
             await self.serial_writer.drain()
             self.logger.info("Sent message to MDB board: %s", message)
-            self.logger.info("Waiting for a single message of type: %s",
-                             prefix)
             await fut
         except asyncio.CancelledError as e:
             self.logger.warning("Got cancelled while sending message %r or "
