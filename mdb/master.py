@@ -105,10 +105,10 @@ class Master:
         await self.return_escrow()
 
     async def notify_stack(self, bill_value):
-        pass
+        self._logger.info('Bill with value %d cents stacked.', bill_value)
 
     async def notify_return(self, bill_value):
-        pass
+        self._logger.info('Bill with value %d cents returned.', bill_value)
 
     async def return_escrow(self):
         try:
