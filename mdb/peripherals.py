@@ -495,8 +495,11 @@ class BillValidator(Peripheral):
                     self._escrow_pending = True
                     if reset_task:
                         # If we're resetting, it's not clear if a bill is still
-                        # in there or not; just spit it back out.
-                        await self.return_escrow()
+                        # in there or not; just try to spit it back out.
+                        try:
+                            await self.return_escrow()
+                        except PeripheralResetError:
+                            pass
                     else:
                         await self._master.notify_escrow(bill_value)
                 elif activity_type == 0x00:
