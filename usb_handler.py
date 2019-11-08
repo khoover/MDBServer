@@ -27,6 +27,7 @@ class USBHandler:
 
     def __init__(self):
         self.initialized = False
+        self.run_task = None
         self.waiters = {}
         self.queues = {}
         self.logger = logging.getLogger('.'.join((__name__,
