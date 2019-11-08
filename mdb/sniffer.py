@@ -32,10 +32,10 @@ class Sniffer:
             address = struct.unpack('>H', bytes.fromhex(message[2]))
             address_str = ""
             if block_status & 0x80:
-                address_str = f"To slave: {address} -- "
+                address_str = f"To slave: {address:x} -- "
             error_str = ""
             if block_status & (~0x81):
-                error_str = "Error: {(block_status & (~0x81)) >> 1} -- "
+                error_str = "Error: {(block_status & (~0x81)) >> 1:x} -- "
             return f"(Time: {time.ctime()} -- " \
                    f"From master: {bool(block_status & 0x80)} -- " \
                    f"{address_str}" \
