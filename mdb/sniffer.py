@@ -70,7 +70,7 @@ class Sniffer:
             return
         self.logger.info('Shutting down.')
         self.usb_handler.unlisten('x')
-        await self.usb_handler.sendread(to_ascii('X,0\n'), 'x')
+        await self.usb_handler.send(to_ascii('X,0\n'))
         self.run_task.cancel()
         self.run_task = None
         self.logger.info('Shutdown complete.')

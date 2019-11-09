@@ -96,7 +96,7 @@ class Master:
         self._logger.info('Shutting down.')
         await self.disable()
         self._run_task.cancel()
-        await self.sendread('M,0\n', 'm')
+        await self.send('M,0\n')
         self._run_task = None
         self._logger.info('Shutdown complete.')
 
