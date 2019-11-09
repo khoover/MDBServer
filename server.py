@@ -20,7 +20,7 @@ is_shutting_down = False
 async def shutdown(master, cashless_slave, sniffer, usb_handler,
                    websocket_client, signame):
     global is_shutting_down
-    if is_shutting_down and signame == 'SIGINT':
+    if is_shutting_down:
         exit('Shutting down immediately.')
     else:
         is_shutting_down = True

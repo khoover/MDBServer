@@ -145,6 +145,7 @@ class USBHandler:
         self.logger.info("Shutting down.")
         if self.run_task:
             self.run_task.cancel()
+            self.run_task = None
         for fut in self.waiters.values():
             fut.cancel()
         self.serial_writer.close()

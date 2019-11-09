@@ -83,4 +83,5 @@ class CashlessSlave:
         self._logger.info("Shutting down.")
         await self._usb_handler.send(to_ascii('C,0\n'))
         self._run_task.cancel()
+        self._run_task = None
         self._logger.info("Shutdown complete.")

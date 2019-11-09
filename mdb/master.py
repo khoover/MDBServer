@@ -97,6 +97,7 @@ class Master:
         await self.disable()
         self._run_task.cancel()
         await self.sendread('M,0\n', 'm')
+        self._run_task = None
         self._logger.info('Shutdown complete.')
 
     # Bill validator specific commands.
