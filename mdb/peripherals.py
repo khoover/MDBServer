@@ -450,15 +450,73 @@ class BillValidator(Peripheral):
                     send_reset = True
                     poll_reset = True
 
+    async def _handle_poll_response(self, response: int, resetting: bool):
+        if response in self.POLL_CRITICAL_STATUSES:
+            self._logger.critical(self.POLL_CRITICAL_STATUSES[response])
+            with suppress(PeripheralResetError):
+                await self.disable()
+        elif response in self.POLL_INFO_STATUSES:
+            self._logger.info(self.POLL_INFO_STATUSES[response])
+        elif response in self.POLL_WARNING_STATUSES:
+            self._logger.warning(self.POLL_WARNING_STATUSES[response])
+        elif response & 0x80:
+            activity_type = (response & 0x70) >> 4
+            bill_type = response & 0x0f
+            bill_value = self.bill_values[bill_type] * self.scaling_factor
+            self._logger.info('Activity type: %#01x, value: %d cents.',
+                              activity_type, bill_value)
+
+            if activity_type == 0x01:
+                # Bill in escrow
+                self._escrow_pending = True
+                if resetting:
+                    # If we're resetting, it's not clear if a bill is still
+                    # in there or not; just try to spit it back out.
+                    with suppress(PeripheralResetError):
+                        await self.return_escrow()
+                else:
+                    await self._master.notify_escrow(bill_value)
+            elif activity_type == 0x00:
+                # Bill stacked
+                await self._master.notify_stack(bill_value)
+            elif activity_type == 0x02:
+                # Bill returned
+                await self._master.notify_return(bill_value)
+            elif activity_type == 0x04:
+                # Disabled bill rejected
+                self._logger.info('Rejected a disabled bill type: %#01x',
+                                  bill_type)
+            else:
+                self._logger.warning('Got an unknown stacker command: '
+                                     '%#01d', activity_type)
+        elif response & 0x40 == 0x40:
+            # Attempted bill insertion while disabled
+            count = response & (0x20 - 1)
+            if count > 1:
+                bill = 'bills'
+            else:
+                bill = 'bill'
+            self._logger.info('Since last poll, people tried inserting %d '
+                              '%s while the validator was disabled.',
+                              count, bill)
+        else:
+            self._logger.warning('Unknown poll response received: %#02d',
+                                 response)
+
     async def handle_poll_responses(self, responses: Sequence[int]) -> None:
-        reset_task = None
+        resetting = 0x06 in responses
         self._logger.debug('Handling poll responses: %s', responses)
 
-        if 0x06 in responses:
+        # Handling responses in parallel
+        awaitables = \
+            [asyncio.create_task(self._handle_poll_response(x, resetting))
+             for x in responses if x != 0x06]
+
+        if resetting:
             self._logger.warning('Got unsolicited JUST RESET.')
             # Unsolicited JUST RESET, do the rest of the reset process.
             self._enabled = False
-            reset_task = asyncio.create_task(self.reset(False, False))
+            awaitables.append(asyncio.create_task(self.reset(False, False)))
             # If an escrow was pending, just try to spit it back out.
             if self._escrow_pending:
                 with suppress(PeripheralResetError):
@@ -473,61 +531,8 @@ class BillValidator(Peripheral):
                 # Peripheral reset while enabling, don't try re-enabling
                 self._logger.info('Reset while enabling.', exc_info=e)
 
-        for response in (x for x in responses if x != 0x06):
-            if response in self.POLL_CRITICAL_STATUSES:
-                self._logger.critical(self.POLL_CRITICAL_STATUSES[response])
-                with suppress(PeripheralResetError):
-                    await self.disable()
-            elif response in self.POLL_INFO_STATUSES:
-                self._logger.info(self.POLL_INFO_STATUSES[response])
-            elif response in self.POLL_WARNING_STATUSES:
-                self._logger.warning(self.POLL_WARNING_STATUSES[response])
-            elif response & 0x80:
-                activity_type = (response & 0x70) >> 4
-                bill_type = response & 0x0f
-                bill_value = self.bill_values[bill_type] * self.scaling_factor
-                self._logger.info('Activity type: %#01x, value: %d cents.',
-                                  activity_type, bill_value)
-
-                if activity_type == 0x01:
-                    # Bill in escrow
-                    self._escrow_pending = True
-                    if reset_task:
-                        # If we're resetting, it's not clear if a bill is still
-                        # in there or not; just try to spit it back out.
-                        with suppress(PeripheralResetError):
-                            await self.return_escrow()
-                    else:
-                        await self._master.notify_escrow(bill_value)
-                elif activity_type == 0x00:
-                    # Bill stacked
-                    await self._master.notify_stack(bill_value)
-                elif activity_type == 0x02:
-                    # Bill returned
-                    await self._master.notify_return(bill_value)
-                elif activity_type == 0x04:
-                    # Disabled bill rejected
-                    self._logger.info('Rejected a disabled bill type: %#01x',
-                                      bill_type)
-                else:
-                    self._logger.warning('Got an unknown stacker command: '
-                                         '%#01d', activity_type)
-            elif response & 0x40 == 0x40:
-                # Attempted bill insertion while disabled
-                count = response & (0x20 - 1)
-                if count > 1:
-                    bill = 'bills'
-                else:
-                    bill = 'bill'
-                self._logger.info('Since last poll, people tried inserting %d '
-                                  '%s while the validator was disabled.',
-                                  count, bill)
-            else:
-                self._logger.warning('Unknown poll response received: %#02d',
-                                     response)
-
-        if reset_task:
-            await reset_task
+        for aw in awaitables:
+            await aw
 
     @reset_wrapper
     async def stack_escrow(self) -> None:
@@ -575,9 +580,10 @@ class BillValidator(Peripheral):
         poll_message = RequestMessage(self.COMMANDS['POLL'])
         while True:
             try:
-                response = await self.sendread_until_data_or_nack(
-                    poll_message)
-                response_statuses = list(response.data)
+                response = await self.sendread_until_timeout(poll_message)
+                response_statuses = []
+                if response.data:
+                    response_statuses = list(response.data)
                 # Ensures we've finished processing a poll response and that
                 # it's been sufficiently long since the last poll before
                 # continuing.
@@ -594,6 +600,7 @@ class BillValidator(Peripheral):
 class CoinAcceptor(Peripheral):
     async def _reset(self, send_reset, poll_reset) -> None:
         await super()._reset(send_reset, poll_reset)
+        self._reset_task = None
 
     @reset_wrapper
     async def enable(self) -> None:
