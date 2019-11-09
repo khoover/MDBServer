@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 import asyncio
+from contextlib import suppress
 import functools
 import logging
 import struct
@@ -458,12 +459,13 @@ class BillValidator(Peripheral):
             # Unsolicited JUST RESET, do the rest of the reset process.
             self._enabled = False
             reset_task = asyncio.create_task(self.reset(False, False))
+            # If an escrow was pending, just try to spit it back out.
+            if self._escrow_pending:
+                with suppress(PeripheralResetError):
+                    await self.return_escrow()
         elif 0x09 not in responses and not self._enabled:
-            try:
+            with suppress(PeripheralResetError):
                 await self.disable()
-            except PeripheralResetError:
-                # It'll be disabled after the reset anyway.
-                pass
         elif 0x09 in responses and self._enabled:
             try:
                 await self.enable()
@@ -474,11 +476,8 @@ class BillValidator(Peripheral):
         for response in (x for x in responses if x != 0x06):
             if response in self.POLL_CRITICAL_STATUSES:
                 self._logger.critical(self.POLL_CRITICAL_STATUSES[response])
-                try:
+                with suppress(PeripheralResetError):
                     await self.disable()
-                except PeripheralResetError:
-                    # Same logic as above.
-                    pass
             elif response in self.POLL_INFO_STATUSES:
                 self._logger.info(self.POLL_INFO_STATUSES[response])
             elif response in self.POLL_WARNING_STATUSES:
@@ -496,10 +495,8 @@ class BillValidator(Peripheral):
                     if reset_task:
                         # If we're resetting, it's not clear if a bill is still
                         # in there or not; just try to spit it back out.
-                        try:
+                        with suppress(PeripheralResetError):
                             await self.return_escrow()
-                        except PeripheralResetError:
-                            pass
                     else:
                         await self._master.notify_escrow(bill_value)
                 elif activity_type == 0x00:
