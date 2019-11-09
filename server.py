@@ -15,6 +15,7 @@ logger = logging.getLogger()
 
 
 is_shutting_down = False
+_main_task = None
 
 
 async def shutdown(master, cashless_slave, sniffer, usb_handler,
@@ -29,9 +30,11 @@ async def shutdown(master, cashless_slave, sniffer, usb_handler,
     await asyncio.gather(master.shutdown(), cashless_slave.shutdown())
     await sniffer.shutdown()
     await usb_handler.shutdown()
+    if _main_task:
+        _main_task.cancel()
 
 
-async def main(args):
+async def _main(args):
     handler = USBHandler()
     master = Master()
     bill_validator = BillValidator()
@@ -83,17 +86,25 @@ async def main(args):
         await asyncio.gather(sniffer.shutdown(), websocket_client.shutdown())
         await handler.shutdown()
         return
+    logger.info('Starting the MDB objects and the websocket client.')
     try:
-        logger.info('Starting the MDB objects and the websocket client.')
         await asyncio.gather(*runners)
-    except Exception as e:
-        logger.critical("Encountered an unhandled exception while running the"
-                        " server, exiting.", exc_info=e)
     finally:
         await websocket_client.shutdown()
         await asyncio.gather(master.shutdown(), cashless_slave.shutdown())
         await sniffer.shutdown()
         await handler.shutdown()
+
+
+# Easier to have asyncio manage the loop and just have this be a wrapper that
+# creates a task the shutdown function can cancel.
+async def main(args):
+    _main_task = asyncio.create_task(_main(args))
+    try:
+        await _main_task
+    except Exception as e:
+        logger.critical("Encountered an unhandled exception while running the"
+                        " server, exiting.", exc_info=e)
 
 
 if __name__ == "__main__":
