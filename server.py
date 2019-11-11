@@ -10,7 +10,6 @@ from sys import exit
 from usb_handler import USBHandler, to_ascii
 from websocket_client import WebsocketClient
 
-logging.basicConfig(level=logging.DEBUG, filename='server.log')
 logger = logging.getLogger()
 
 
@@ -118,5 +117,14 @@ if __name__ == "__main__":
     parser.add_argument("--debug", help="Run the server in debug mode.",
                         action='store_true')
     args = parser.parse_args()
+    log_level = logging.INFO
+    if args.debug:
+        log_level = logging.DEBUG
+    logging.basicConfig(level=log_level,
+                        format='%(asctime)s %(name)-20s %(levelname)-8s '
+                        '%(message):',
+                        datefmt='%H:%M:%S',
+                        filename='/tmp/mdb_server.log',
+                        filemode='w')
     logger.debug('Launching event loop.')
     asyncio.run(main(args), debug=args.debug)
