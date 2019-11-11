@@ -7,6 +7,7 @@ from mdb.peripherals import CoinAcceptor, BillValidator
 from mdb.sniffer import Sniffer
 import signal
 from sys import exit
+import time
 from usb_handler import USBHandler, to_ascii
 from websocket_client import WebsocketClient
 
@@ -124,7 +125,7 @@ if __name__ == "__main__":
                         format='%(asctime)s %(name)-20s %(levelname)-8s '
                         '%(message):',
                         datefmt='%H:%M:%S',
-                        filename='/tmp/mdb_server.log',
+                        filename=f'/tmp/mdb_server-{time.time_ns()}.log',
                         filemode='w')
     logger.debug('Launching event loop.')
     asyncio.run(main(args), debug=args.debug)
